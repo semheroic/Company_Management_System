@@ -1,10 +1,9 @@
-
 import { ArrowLeft, Plus, Calendar, Download, Eye, Edit, Trash2, Users, FileText, CheckCircle, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +25,11 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function MeetingMinutes() {
   const { toast } = useToast();
+  const { companyId } = useParams<{ companyId: string }>(); 
+  
+  // Parse companyId as number for service calls
+  const numericCompanyId = parseInt(companyId || "1", 10);
+
   const [meetings, setMeetings] = useState<MeetingMinutes[]>([]);
   const [filteredMeetings, setFilteredMeetings] = useState<MeetingMinutes[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -35,42 +39,62 @@ export default function MeetingMinutes() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [statistics, setStatistics] = useState<any>({});
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Load data on mount or when companyId changes
   useEffect(() => {
-    loadMeetings();
-  }, []);
+    if (numericCompanyId) {
+      loadMeetings();
+    }
+  }, [numericCompanyId]);
 
+  // Apply filters whenever dependencies change
   useEffect(() => {
     applyFilters();
   }, [meetings, filterType, filterStatus, searchQuery]);
 
-  const loadMeetings = () => {
-    const meetingData = MeetingMinutesService.getMeetings();
-    const stats = MeetingMinutesService.getStatistics();
-    setMeetings(meetingData);
-    setStatistics(stats);
+  const loadMeetings = async () => {
+    setIsLoading(true);
+    try {
+      // Fetching specifically using the company ID from the URL
+      const [meetingData, stats] = await Promise.all([
+        MeetingMinutesService.getMeetings(numericCompanyId),
+        MeetingMinutesService.getStatistics(numericCompanyId)
+      ]);
+      
+      setMeetings(Array.isArray(meetingData) ? meetingData : []);
+      setStatistics(stats || {});
+    } catch (error) {
+      toast({
+        title: "Connection Error",
+        description: "Failed to fetch meetings for this company.",
+        variant: "destructive",
+      });
+      setMeetings([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const applyFilters = () => {
+    if (!Array.isArray(meetings)) return;
+    
     let filtered = [...meetings];
 
-    // Filter by type
     if (filterType !== "all") {
-      filtered = filtered.filter(meeting => meeting.type === filterType);
+      filtered = filtered.filter(m => m.type === filterType);
     }
 
-    // Filter by status
     if (filterStatus !== "all") {
-      filtered = filtered.filter(meeting => meeting.status === filterStatus);
+      filtered = filtered.filter(m => m.status === filterStatus);
     }
 
-    // Filter by search query
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(meeting =>
-        meeting.title.toLowerCase().includes(query) ||
-        meeting.chairperson.toLowerCase().includes(query) ||
-        meeting.location.toLowerCase().includes(query)
+      filtered = filtered.filter(m =>
+        m.title.toLowerCase().includes(query) ||
+        m.chairperson.toLowerCase().includes(query) ||
+        m.location.toLowerCase().includes(query)
       );
     }
 
@@ -91,33 +115,30 @@ export default function MeetingMinutes() {
     setViewingMeeting(meeting);
   };
 
-  const handleDeleteMeeting = (id: number) => {
+  const handleDeleteMeeting = async (id: number) => {
     if (confirm("Are you sure you want to delete this meeting?")) {
-      const success = MeetingMinutesService.deleteMeeting(id);
-      if (success) {
-        toast({
-          title: "Success",
-          description: "Meeting deleted successfully",
-        });
-        loadMeetings();
+      try {
+        const success = await MeetingMinutesService.deleteMeeting(numericCompanyId, id);
+        if (success) {
+          toast({ title: "Success", description: "Meeting deleted successfully" });
+          loadMeetings();
+        }
+      } catch (error) {
+        toast({ title: "Error", description: "Delete failed", variant: "destructive" });
       }
     }
   };
 
-  const handleFormSubmit = (meetingData: any) => {
+  const handleFormSubmit = async (meetingData: any) => {
     try {
       if (editingMeeting) {
-        MeetingMinutesService.updateMeeting(editingMeeting.id, meetingData);
-        toast({
-          title: "Success",
-          description: "Meeting updated successfully",
-        });
+        // Pass numericCompanyId to maintain data isolation
+        await MeetingMinutesService.updateMeeting(numericCompanyId, editingMeeting.id, meetingData);
+        toast({ title: "Success", description: "Meeting updated successfully" });
       } else {
-        MeetingMinutesService.addMeeting(meetingData);
-        toast({
-          title: "Success",
-          description: "Meeting created successfully",
-        });
+        // Pass numericCompanyId to link the new meeting to this specific company
+        await MeetingMinutesService.addMeeting(numericCompanyId, meetingData);
+        toast({ title: "Success", description: "Meeting created successfully" });
       }
       setShowForm(false);
       setEditingMeeting(null);
@@ -125,7 +146,7 @@ export default function MeetingMinutes() {
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to save meeting",
+        description: "Failed to save meeting to database",
         variant: "destructive",
       });
     }
@@ -156,48 +177,27 @@ export default function MeetingMinutes() {
   };
 
   const exportToPDF = (meeting: MeetingMinutes) => {
-    // Basic PDF export functionality - would be enhanced with proper PDF library
     const content = `
-      Meeting Minutes
-      
-      Title: ${meeting.title}
-      Type: ${meeting.type}
-      Date: ${meeting.date}
-      Time: ${meeting.time}
+      Meeting Minutes: ${meeting.title}
+      Type: ${meeting.type} | Date: ${meeting.date}
       Location: ${meeting.location}
-      Chairperson: ${meeting.chairperson}
-      Secretary: ${meeting.secretary}
+      Chair: ${meeting.chairperson} | Secretary: ${meeting.secretary}
       
-      Attendees:
-      ${meeting.attendees.map(a => `- ${a.name} (${a.role})`).join('\n')}
-      
-      Agenda:
-      ${meeting.agenda.map((item, i) => `${i + 1}. ${item}`).join('\n')}
-      
-      Discussions:
-      ${meeting.discussions}
-      
-      Decisions:
-      ${meeting.decisions.map((item, i) => `${i + 1}. ${item}`).join('\n')}
-      
-      Action Items:
-      ${meeting.actionItems.map((item, i) => `${i + 1}. ${item}`).join('\n')}
-      
-      Next Meeting: ${meeting.nextMeetingDate || 'TBD'}
+      Attendees: ${meeting.attendees?.map(a => `${a.name} (${a.role})`).join(', ')}
+      Agenda: ${meeting.agenda?.join('; ')}
+      Discussions: ${meeting.discussions}
+      Decisions: ${meeting.decisions?.join('; ')}
+      Action Items: ${meeting.action_items?.join('; ')}
     `;
 
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${meeting.title.replace(/\s+/g, '_')}_Minutes.txt`;
+    a.download = `${meeting.title}_Minutes.txt`;
     a.click();
     URL.revokeObjectURL(url);
-
-    toast({
-      title: "Success",
-      description: "Meeting minutes exported successfully",
-    });
+    toast({ title: "Success", description: "Exported to text file" });
   };
 
   return (
@@ -321,60 +321,64 @@ export default function MeetingMinutes() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {filteredMeetings.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No meetings found matching your criteria</p>
-                </div>
-              ) : (
-                filteredMeetings.map((meeting) => (
-                  <div key={meeting.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-medium">{meeting.title}</h3>
-                        <Badge variant={getTypeBadgeVariant(meeting.type)}>
-                          {meeting.type}
-                        </Badge>
-                        <Badge variant={getStatusBadgeVariant(meeting.status)}>
-                          {meeting.status}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm text-gray-600">
-                        <span>📅 {new Date(meeting.date).toLocaleDateString()}</span>
-                        <span>🕐 {meeting.time}</span>
-                        <span>📍 {meeting.location}</span>
-                        <span>👥 {meeting.attendees.length} attendees</span>
-                        <span>👔 Chair: {meeting.chairperson}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => handleViewMeeting(meeting)}>
-                        <Eye className="w-4 h-4 mr-1" />
-                        View
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleEditMeeting(meeting)}>
-                        <Edit className="w-4 h-4 mr-1" />
-                        Edit
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => exportToPDF(meeting)}>
-                        <Download className="w-4 h-4 mr-1" />
-                        Export
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => handleDeleteMeeting(meeting.id)}
-                        className="text-red-600 hover:text-red-700"
-                      >
-                        <Trash2 className="w-4 h-4 mr-1" />
-                        Delete
-                      </Button>
-                    </div>
+            {isLoading ? (
+               <div className="text-center py-10">Loading meetings...</div>
+            ) : (
+              <div className="space-y-4">
+                {filteredMeetings.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>No meetings found matching your criteria</p>
                   </div>
-                ))
-              )}
-            </div>
+                ) : (
+                  filteredMeetings.map((meeting) => (
+                    <div key={meeting.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="font-medium">{meeting.title}</h3>
+                          <Badge variant={getTypeBadgeVariant(meeting.type)}>
+                            {meeting.type}
+                          </Badge>
+                          <Badge variant={getStatusBadgeVariant(meeting.status)}>
+                            {meeting.status}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                          <span>📅 {new Date(meeting.date).toLocaleDateString()}</span>
+                          <span>🕐 {meeting.time}</span>
+                          <span>📍 {meeting.location}</span>
+                          <span>👥 {meeting.attendees?.length || 0} attendees</span>
+                          <span>👔 Chair: {meeting.chairperson}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => handleViewMeeting(meeting)}>
+                          <Eye className="w-4 h-4 mr-1" />
+                          View
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleEditMeeting(meeting)}>
+                          <Edit className="w-4 h-4 mr-1" />
+                          Edit
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => exportToPDF(meeting)}>
+                          <Download className="w-4 h-4 mr-1" />
+                          Export
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => handleDeleteMeeting(meeting.id)}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -405,9 +409,9 @@ export default function MeetingMinutes() {
             </DialogHeader>
             {viewingMeeting && (
               <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h3 className="font-semibold mb-2">Meeting Details</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <h3 className="font-semibold border-b pb-1">Meeting Details</h3>
                     <div className="space-y-2 text-sm">
                       <p><strong>Type:</strong> {viewingMeeting.type}</p>
                       <p><strong>Date:</strong> {new Date(viewingMeeting.date).toLocaleDateString()}</p>
@@ -422,63 +426,67 @@ export default function MeetingMinutes() {
                       </p>
                     </div>
                   </div>
-                  <div>
-                    <h3 className="font-semibold mb-2">Attendees ({viewingMeeting.attendees.length})</h3>
-                    <div className="space-y-1 text-sm">
-                      {viewingMeeting.attendees.map((attendee, index) => (
-                        <p key={index}>{attendee.name} - {attendee.role}</p>
+                  <div className="space-y-4">
+                    <h3 className="font-semibold border-b pb-1">Attendees ({viewingMeeting.attendees?.length || 0})</h3>
+                    <div className="space-y-1 text-sm max-h-40 overflow-y-auto">
+                      {viewingMeeting.attendees?.map((attendee, index) => (
+                        <p key={index} className="p-1 bg-gray-50 rounded">
+                          <span className="font-medium">{attendee.name}</span> — {attendee.role}
+                        </p>
                       ))}
                     </div>
                   </div>
                 </div>
 
-                <div>
-                  <h3 className="font-semibold mb-2">Agenda</h3>
+                <div className="space-y-4">
+                  <h3 className="font-semibold border-b pb-1">Agenda</h3>
                   <ol className="list-decimal list-inside space-y-1 text-sm">
-                    {viewingMeeting.agenda.map((item, index) => (
-                      <li key={index}>{item}</li>
+                    {viewingMeeting.agenda?.map((item, index) => (
+                      <li key={index} className="p-1">{item}</li>
                     ))}
                   </ol>
                 </div>
 
-                <div>
-                  <h3 className="font-semibold mb-2">Discussions</h3>
-                  <p className="text-sm bg-gray-50 p-3 rounded">{viewingMeeting.discussions}</p>
+                <div className="space-y-4">
+                  <h3 className="font-semibold border-b pb-1">Discussions</h3>
+                  <p className="text-sm bg-gray-50 p-3 rounded leading-relaxed whitespace-pre-wrap">{viewingMeeting.discussions}</p>
                 </div>
 
-                <div>
-                  <h3 className="font-semibold mb-2">Decisions Made</h3>
-                  <ol className="list-decimal list-inside space-y-1 text-sm">
-                    {viewingMeeting.decisions.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ol>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <h3 className="font-semibold border-b pb-1">Decisions Made</h3>
+                    <ul className="list-disc list-inside space-y-1 text-sm">
+                      {viewingMeeting.decisions?.map((item, index) => (
+                        <li key={index} className="p-1">{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="space-y-4">
+                    <h3 className="font-semibold border-b pb-1">Action Items</h3>
+                    <ul className="list-disc list-inside space-y-1 text-sm">
+                      {viewingMeeting.action_items?.map((item, index) => (
+                        <li key={index} className="p-1 text-blue-700">{item}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
 
-                <div>
-                  <h3 className="font-semibold mb-2">Action Items</h3>
-                  <ol className="list-decimal list-inside space-y-1 text-sm">
-                    {viewingMeeting.actionItems.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ol>
-                </div>
-
-                {viewingMeeting.nextMeetingDate && (
-                  <div>
-                    <h3 className="font-semibold mb-2">Next Meeting</h3>
-                    <p className="text-sm">{new Date(viewingMeeting.nextMeetingDate).toLocaleDateString()}</p>
+                {viewingMeeting.next_meeting_date && (
+                  <div className="pt-4 border-t">
+                    <p className="text-sm">
+                      <strong>Next Meeting Date:</strong> {new Date(viewingMeeting.next_meeting_date).toLocaleDateString()}
+                    </p>
                   </div>
                 )}
 
-                <div className="flex justify-end gap-2">
+                <div className="flex justify-end gap-2 pt-4">
                   <Button variant="outline" onClick={() => handleEditMeeting(viewingMeeting)}>
                     <Edit className="w-4 h-4 mr-2" />
                     Edit Meeting
                   </Button>
                   <Button onClick={() => exportToPDF(viewingMeeting)}>
                     <Download className="w-4 h-4 mr-2" />
-                    Export PDF
+                    Export as Text
                   </Button>
                 </div>
               </div>

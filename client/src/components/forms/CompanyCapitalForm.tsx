@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -7,8 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Building, DollarSign, AlertTriangle } from "lucide-react";
+import { Building, DollarSign, AlertTriangle, Loader2 } from "lucide-react";
 import CompanyCapitalService, { CompanyCapital } from "@/services/companyCapitalService";
+import axios from "axios";
+import { useParams } from "react-router-dom";
 
 interface CompanyCapitalFormProps {
   open: boolean;
@@ -19,6 +20,9 @@ interface CompanyCapitalFormProps {
 
 export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: CompanyCapitalFormProps) {
   const { toast } = useToast();
+  const { companyId } = useParams();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const [formData, setFormData] = useState({
     authorized_shares: "",
     share_price: "",
@@ -59,7 +63,7 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
     });
   }, [formData.authorized_shares, formData.share_price]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.authorized_shares || !formData.share_price) {
@@ -83,30 +87,49 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
+      // 1. Prepare payload for the database (Table 6)
       const capitalData = {
-        company_id: localStorage.getItem('selectedCompanyId') || 'comp-001',
+        company_id: companyId || localStorage.getItem('selectedCompanyId'),
         authorized_shares: shares,
         share_price: price,
         currency: formData.currency,
-        capital_type: formData.capital_type as 'ordinary' | 'preference' | 'mixed'
+        capital_type: formData.capital_type as 'ordinary' | 'preference' | 'mixed',
+        total_value: shares * price
       };
 
-      CompanyCapitalService.initializeCompanyCapital(capitalData);
-      
-      toast({
-        title: "Success",
-        description: "Company capital structure initialized successfully"
-      });
+      // 2. Determine if we are creating or updating
+     // Define the base URL (using 5000 as requested)
+const BASE_URL = "http://localhost:5000";
+// Construct the full endpoint
+const endpoint = `${BASE_URL}/api/company/${capitalData.company_id}/capital-structure`;
+      const response = editData 
+        ? await axios.put(endpoint, capitalData)
+        : await axios.post(endpoint, capitalData);
 
-      onSuccess();
-      onClose();
-    } catch (error) {
+      if (response.data.success) {
+        // 3. Keep the existing local service call for state sync if needed
+        CompanyCapitalService.initializeCompanyCapital(capitalData as any);
+        
+        toast({
+          title: "Success",
+          description: editData ? "Capital structure updated" : "Company capital structure initialized successfully"
+        });
+
+        onSuccess();
+        onClose();
+      }
+    } catch (error: any) {
+      console.error("Backend error:", error);
       toast({
-        title: "Error",
-        description: "Failed to initialize capital structure",
+        title: "System Error",
+        description: error.response?.data?.message || "Failed to communicate with capital management service",
         variant: "destructive"
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -115,12 +138,12 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Building className="w-5 h-5" />
+            <Building className="w-5 h-5 text-blue-600" />
             {editData ? "Edit Capital Structure" : "Initialize Company Capital"}
           </DialogTitle>
         </DialogHeader>
 
-        <Alert>
+        <Alert className="bg-slate-50">
           <DollarSign className="h-4 w-4" />
           <AlertDescription>
             This sets up your company&apos;s authorized share capital. You can issue shares up to this limit.
@@ -129,7 +152,7 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div>
+            <div className="space-y-2">
               <Label htmlFor="authorized_shares">Authorized Shares *</Label>
               <Input
                 id="authorized_shares"
@@ -140,12 +163,12 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
                 placeholder="e.g., 10000"
                 required
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Maximum number of shares your company can issue
+              <p className="text-[10px] text-gray-500">
+                Maximum units your company is legally permitted to issue.
               </p>
             </div>
 
-            <div>
+            <div className="space-y-2">
               <Label htmlFor="share_price">Price per Share *</Label>
               <Input
                 id="share_price"
@@ -157,8 +180,8 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
                 placeholder="e.g., 1000"
                 required
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Nominal value per share in {formData.currency}
+              <p className="text-[10px] text-gray-500">
+                The nominal (par) value per unit in {formData.currency}.
               </p>
             </div>
 
@@ -192,41 +215,49 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
           </div>
 
           {/* Calculated Values Preview */}
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <h4 className="font-medium mb-2">Capital Structure Preview</h4>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-gray-600">Authorized Shares:</span>
-                <span className="font-bold ml-2">{parseFloat(formData.authorized_shares || '0').toLocaleString()}</span>
+          <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg">
+            <h4 className="font-semibold text-blue-900 text-sm mb-3">Equity Summary Preview</h4>
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              <div className="flex flex-col">
+                <span className="text-gray-600">Authorized Volume:</span>
+                <span className="font-bold text-sm">{parseFloat(formData.authorized_shares || '0').toLocaleString()} Units</span>
               </div>
-              <div>
-                <span className="text-gray-600">Price per Share:</span>
-                <span className="font-bold ml-2">{parseFloat(formData.share_price || '0').toLocaleString()} {formData.currency}</span>
+              <div className="flex flex-col">
+                <span className="text-gray-600">Unit Valuation:</span>
+                <span className="font-bold text-sm">{parseFloat(formData.share_price || '0').toLocaleString()} {formData.currency}</span>
               </div>
-              <div className="col-span-2">
-                <span className="text-gray-600">Total Authorized Capital:</span>
-                <span className="font-bold ml-2 text-green-600">
+              <div className="col-span-2 pt-2 border-t border-blue-200 mt-1">
+                <span className="text-gray-600">Total Market/Par Capitalization:</span>
+                <div className="font-bold text-lg text-blue-700">
                   {calculatedValues.total_authorized_capital.toLocaleString()} {formData.currency}
-                </span>
+                </div>
               </div>
             </div>
           </div>
 
-          {calculatedValues.total_authorized_capital < 100000 && formData.currency === 'RWF' && (
-            <Alert variant="destructive">
+          {/* Compliance Check for Rwanda */}
+          {calculatedValues.total_authorized_capital < 100000 && formData.currency === 'RWF' && formData.authorized_shares !== "" && (
+            <Alert variant="destructive" className="py-2">
               <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                Minimum capital requirements in Rwanda may apply. Please verify with RDB regulations.
+              <AlertDescription className="text-xs">
+                Minimum capital requirements for certain company types in Rwanda may apply (RDB Law).
               </AlertDescription>
             </Alert>
           )}
 
-          <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>
+          <div className="flex justify-end gap-2 pt-4 border-t">
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit">
-              {editData ? "Update Capital" : "Initialize Capital"}
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                editData ? "Update Structure" : "Initialize Structure"
+              )}
             </Button>
           </div>
         </form>

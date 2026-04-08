@@ -1,6 +1,10 @@
+import axios from 'axios';
+
+const API_URL = 'http://localhost:5000/api';
 
 export interface BusinessPlan {
-  id: string;
+  id: number; // MySQL auto-increment IDs are numbers
+  company_id: number;
   title: string;
   year: number;
   description?: string;
@@ -21,110 +25,100 @@ export interface BusinessPlan {
 }
 
 class BusinessPlanService {
-  private static businessPlans: BusinessPlan[] = [
-    {
-      id: 'bp-001',
-      title: '2024 Strategic Business Plan',
-      year: 2024,
-      description: 'Comprehensive business plan for 2024 expansion',
-      strategic_goals: 'Expand market presence by 30%, Launch 2 new product lines, Increase revenue by 25%',
-      mission_statement: 'To provide exceptional compliance and business management solutions',
-      vision_statement: 'To become Rwanda\'s leading business compliance platform',
-      swot_analysis: 'Strengths: Strong local knowledge, Experienced team\nWeaknesses: Limited marketing budget\nOpportunities: Growing SME sector\nThreats: Competition from international firms',
-      financial_projections: 'Year 1: 50M RWF revenue target\nYear 2: 75M RWF revenue target\nYear 3: 100M RWF revenue target',
-      market_analysis: 'Target market: SMEs and mid-size companies in Rwanda',
-      competitive_analysis: 'Main competitors: Local accounting firms, International consulting companies',
-      uploaded_by: 'John Doe',
-      created_at: '2024-01-15T10:00:00Z',
-      updated_at: '2024-06-15T14:30:00Z',
-      version: 2,
-      status: 'active'
-    }
-  ];
-
-  static getAllBusinessPlans(): BusinessPlan[] {
-    return [...this.businessPlans].sort((a, b) => b.year - a.year);
-  }
-
-  static getBusinessPlansByYear(year: number): BusinessPlan[] {
-    return this.businessPlans.filter(plan => plan.year === year);
-  }
-
-  static getActiveBusinessPlan(): BusinessPlan | null {
-    return this.businessPlans.find(plan => plan.status === 'active') || null;
-  }
-
-  static createBusinessPlan(data: Omit<BusinessPlan, 'id' | 'created_at' | 'updated_at' | 'version'>): BusinessPlan {
-    const newPlan: BusinessPlan = {
-      ...data,
-      id: `bp-${Date.now()}`,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      version: 1
-    };
-
-    this.businessPlans.push(newPlan);
-    console.log('Created new business plan:', newPlan.title);
-    return newPlan;
-  }
-
-  static updateBusinessPlan(id: string, updates: Partial<BusinessPlan>): BusinessPlan | null {
-    const planIndex = this.businessPlans.findIndex(plan => plan.id === id);
-    if (planIndex === -1) return null;
-
-    const updatedPlan = {
-      ...this.businessPlans[planIndex],
-      ...updates,
-      updated_at: new Date().toISOString(),
-      version: this.businessPlans[planIndex].version + 1
-    };
-
-    this.businessPlans[planIndex] = updatedPlan;
-    console.log('Updated business plan:', updatedPlan.title);
-    return updatedPlan;
-  }
-
-  static deleteBusinessPlan(id: string): boolean {
-    const planIndex = this.businessPlans.findIndex(plan => plan.id === id);
-    if (planIndex === -1) return false;
-
-    this.businessPlans.splice(planIndex, 1);
-    console.log('Deleted business plan with id:', id);
-    return true;
-  }
-
-  static archiveBusinessPlan(id: string): boolean {
-    const plan = this.businessPlans.find(plan => plan.id === id);
-    if (!plan) return false;
-
-    plan.status = 'archived';
-    plan.updated_at = new Date().toISOString();
-    console.log('Archived business plan:', plan.title);
-    return true;
-  }
-
-  static setActiveBusinessPlan(id: string): boolean {
-    // First, set all plans to archived
-    this.businessPlans.forEach(plan => {
-      if (plan.status === 'active') {
-        plan.status = 'archived';
+  /**
+   * Helper to set headers for the validateCompany middleware
+   */
+  private static getHeaders(companyId: number) {
+    return {
+      headers: { 
+        'x-company-id': String(companyId),
+        'Content-Type': 'application/json'
       }
-    });
+    };
+  }
 
-    // Then set the selected plan as active
-    const plan = this.businessPlans.find(plan => plan.id === id);
-    if (!plan) return false;
+  // GET all plans for a company
+  static async getAllBusinessPlans(companyId: number): Promise<BusinessPlan[]> {
+    const response = await axios.get(
+      `${API_URL}/company/${companyId}/business-plans`,
+      this.getHeaders(companyId)
+    );
+    return response.data;
+  }
 
-    plan.status = 'active';
-    plan.updated_at = new Date().toISOString();
-    console.log('Set active business plan:', plan.title);
+  // GET the single active plan
+  static async getActiveBusinessPlan(companyId: number): Promise<BusinessPlan | null> {
+    const response = await axios.get(
+      `${API_URL}/company/${companyId}/business-plans/active`,
+      this.getHeaders(companyId)
+    );
+    return response.data;
+  }
+
+  // POST create a new plan
+  static async createBusinessPlan(
+    companyId: number, 
+    data: Omit<BusinessPlan, 'id' | 'created_at' | 'updated_at' | 'version' | 'company_id'>
+  ): Promise<BusinessPlan> {
+    const response = await axios.post(
+      `${API_URL}/company/${companyId}/business-plans`,
+      data,
+      this.getHeaders(companyId)
+    );
+    return response.data;
+  }
+
+  // PUT update a plan (Using :planId to avoid clash with companyId)
+  static async updateBusinessPlan(
+    companyId: number, 
+    planId: number, 
+    updates: Partial<BusinessPlan>
+  ): Promise<BusinessPlan> {
+    const response = await axios.put(
+      `${API_URL}/company/${companyId}/business-plans/${planId}`,
+      updates,
+      this.getHeaders(companyId)
+    );
+    return response.data;
+  }
+
+  // DELETE a plan
+  static async deleteBusinessPlan(companyId: number, planId: number): Promise<boolean> {
+    await axios.delete(
+      `${API_URL}/company/${companyId}/business-plans/${planId}`,
+      this.getHeaders(companyId)
+    );
     return true;
   }
 
-  static getYearsSummary(): Array<{ year: number; planCount: number; hasActive: boolean }> {
+  // PATCH archive a plan
+  static async archiveBusinessPlan(companyId: number, planId: number): Promise<boolean> {
+    await axios.patch(
+      `${API_URL}/company/${companyId}/business-plans/${planId}/archive`,
+      {},
+      this.getHeaders(companyId)
+    );
+    return true;
+  }
+
+  // PATCH set active (This triggers the backend transaction to archive others)
+  static async setActiveBusinessPlan(companyId: number, planId: number): Promise<boolean> {
+    await axios.patch(
+      `${API_URL}/company/${companyId}/business-plans/${planId}/active`,
+      {},
+      this.getHeaders(companyId)
+    );
+    return true;
+  }
+
+  /**
+   * Summarizes plan counts per year from live data
+   */
+  static async getYearsSummary(companyId: number): Promise<Array<{ year: number; planCount: number; hasActive: boolean }>> {
+    const plans = await this.getAllBusinessPlans(companyId);
     const yearMap = new Map<number, { count: number; hasActive: boolean }>();
     
-    this.businessPlans.forEach(plan => {
+    plans.forEach(plan => {
       const existing = yearMap.get(plan.year) || { count: 0, hasActive: false };
       yearMap.set(plan.year, {
         count: existing.count + 1,

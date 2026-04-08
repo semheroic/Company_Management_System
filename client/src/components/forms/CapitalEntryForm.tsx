@@ -1,5 +1,4 @@
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { PiggyBank, Upload } from "lucide-react";
+import { PiggyBank, Upload, Loader2 } from "lucide-react";
 import UniversalTransactionHandler from "@/services/universalTransactionHandler";
+import axios from "axios"; // Added Axios
+import { useParams } from "react-router-dom"; // To get companyId from URL
 
 interface CapitalEntryFormProps {
   open: boolean;
@@ -18,12 +19,15 @@ interface CapitalEntryFormProps {
 
 export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormProps) {
   const { toast } = useToast();
+  const { companyId } = useParams(); // Assumes route is /company/:companyId/...
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
   const [formData, setFormData] = useState({
     shareholder_name: '',
     shareholder_id: '',
     amount: '',
-    date_contributed: '',
-    method: '',
+    date_contributed: new Date().toISOString().split('T')[0],
+    method: 'bank_transfer',
     type: 'contribution',
     description: '',
     file_url: '',
@@ -43,65 +47,84 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
-      // Map form type to UTS transaction type
+      // 1. Prepare Backend Payload for Table 5 (capital_entries)
+      const backendPayload = {
+        shareholder_id: formData.shareholder_id,
+        amount: parseFloat(formData.amount),
+        transaction_type: formData.type,
+        date_contributed: formData.date_contributed,
+        payment_method: formData.method,
+        status: formData.status,
+        shares_allocated: formData.shares_allocated ? parseInt(formData.shares_allocated) : null,
+        description: formData.description,
+        document_url: formData.file_url
+      };
+
+      // 2. Map form type to UTS transaction type for Accounting (Double Entry)
       const transactionType = formData.type === 'contribution' ? 'capital_contribution' : 
                              formData.type === 'withdrawal' ? 'capital_withdrawal' : 'equity_adjustment';
+      const BASE_URL = "http://localhost:5000";
+      // 3. EXECUTE API CALL TO BACKEND
+      const apiResponse = await axios.post(
+        `${BASE_URL}/api/company/${companyId}/capital/entry`, 
+        backendPayload
+      );
 
-      // Process through Universal Transaction Handler
-      const response = await UniversalTransactionHandler.processTransaction({
-        type: transactionType as any,
-        amount: parseFloat(formData.amount),
-        description: formData.description || `Capital ${formData.type} by ${formData.shareholder_name}`,
-        date: formData.date_contributed,
-        payment_method: formData.method === 'cash' ? 'cash' : 'bank',
-        payment_status: 'paid', // Capital transactions are immediate
-        reference_number: `CAP-${Date.now()}`,
-        supporting_documents: formData.file_url ? [formData.file_url] : [],
-        additional_data: {
-          shareholder_id: formData.shareholder_id || `SH-${Date.now()}`,
-          shareholder_name: formData.shareholder_name,
-          shares_allocated: parseFloat(formData.shares_allocated || '0'),
-          transaction_type: formData.type,
-          status: formData.status
-        }
-      });
+      if (apiResponse.data.success) {
+        // 4. TRIGGER UTS (Accounting integration)
+        // We keep this because your frontend uses UTS to sync with the General Ledger
+        await UniversalTransactionHandler.processTransaction({
+          type: transactionType as any,
+          amount: parseFloat(formData.amount),
+          description: formData.description || `Capital ${formData.type} by ${formData.shareholder_name}`,
+          date: formData.date_contributed,
+          payment_method: formData.method === 'cash' ? 'cash' : 'bank',
+          payment_status: 'paid',
+          reference_number: apiResponse.data.reference_number || `CAP-${Date.now()}`,
+          supporting_documents: formData.file_url ? [formData.file_url] : [],
+          additional_data: {
+            ...backendPayload,
+            shareholder_name: formData.shareholder_name
+          }
+        });
 
-      if (response.success) {
         toast({
-          title: "Capital Entry Processed",
-          description: `Capital ${formData.type} recorded and posted to accounting books automatically`,
+          title: "Success",
+          description: "Capital entry saved to database and posted to accounts.",
         });
 
         onSuccess();
         onClose();
-        setFormData({
-          shareholder_name: '',
-          shareholder_id: '',
-          amount: '',
-          date_contributed: '',
-          method: '',
-          type: 'contribution',
-          description: '',
-          file_url: '',
-          status: 'confirmed',
-          shares_allocated: ''
-        });
-      } else {
-        toast({
-          title: "Error",
-          description: response.errors?.join(', ') || "Failed to process capital entry",
-          variant: "destructive"
-        });
+        resetForm();
       }
-      
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Submission error:", error);
       toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to record capital entry",
+        title: "Server Error",
+        description: error.response?.data?.message || "Failed to connect to the server",
         variant: "destructive"
       });
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      shareholder_name: '',
+      shareholder_id: '',
+      amount: '',
+      date_contributed: new Date().toISOString().split('T')[0],
+      method: 'bank_transfer',
+      type: 'contribution',
+      description: '',
+      file_url: '',
+      status: 'confirmed',
+      shares_allocated: ''
+    });
   };
 
   return (
@@ -109,11 +132,11 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <PiggyBank className="w-5 h-5" />
-            Record Capital Entry (Integrated UTS)
+            <PiggyBank className="w-5 h-5 text-green-600" />
+            Record Capital Entry (Integrated MariaDB)
           </DialogTitle>
           <p className="text-sm text-gray-600">
-            This will automatically post to accounting books and update all related registers
+            Securely record equity transactions. Changes reflect in your Balance Sheet and Share Register.
           </p>
         </DialogHeader>
         
@@ -126,6 +149,7 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
                 value={formData.shareholder_name}
                 onChange={(e) => setFormData({...formData, shareholder_name: e.target.value})}
                 placeholder="Enter shareholder name"
+                required
               />
             </div>
             <div>
@@ -154,6 +178,7 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
                 placeholder="0"
                 min="0"
                 step="1000"
+                required
               />
             </div>
             <div>
@@ -177,6 +202,7 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
                 type="date"
                 value={formData.date_contributed}
                 onChange={(e) => setFormData({...formData, date_contributed: e.target.value})}
+                required
               />
             </div>
             <div>
@@ -201,7 +227,7 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
               id="description"
               value={formData.description}
               onChange={(e) => setFormData({...formData, description: e.target.value})}
-              placeholder="Additional details about this capital entry..."
+              placeholder="e.target.value"
               rows={3}
             />
           </div>
@@ -213,7 +239,7 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
                 id="file_url"
                 value={formData.file_url}
                 onChange={(e) => setFormData({...formData, file_url: e.target.value})}
-                placeholder="URL to bank slip, agreement, or receipt"
+                placeholder="URL to bank slip or agreement"
               />
               <Button type="button" variant="outline" size="sm">
                 <Upload className="w-4 h-4 mr-2" />
@@ -224,46 +250,43 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
 
           {/* Transaction Preview */}
           {formData.amount && (
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h4 className="font-medium text-blue-900 mb-2">📊 Accounting Preview</h4>
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+              <h4 className="font-medium text-blue-900 mb-2 flex items-center gap-2">
+                📊 Accounting Preview
+              </h4>
               <div className="text-sm space-y-1">
                 {formData.type === 'contribution' && (
                   <>
                     <div className="flex justify-between">
-                      <span>Dr: {formData.method === 'cash' ? 'Petty Cash' : 'Cash at Bank'}</span>
-                      <span className="font-mono">RWF {parseFloat(formData.amount || '0').toLocaleString()}</span>
+                      <span className="text-gray-600 font-mono">Dr: {formData.method === 'cash' ? '1001-Cash' : '1002-Bank'}</span>
+                      <span className="font-bold text-green-700">+{parseFloat(formData.amount || '0').toLocaleString()} RWF</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Cr: Share Capital</span>
-                      <span className="font-mono">RWF {parseFloat(formData.amount || '0').toLocaleString()}</span>
+                      <span className="text-gray-600 font-mono">Cr: 3001-Share Capital</span>
+                      <span className="font-bold text-blue-700">+{parseFloat(formData.amount || '0').toLocaleString()} RWF</span>
                     </div>
                   </>
                 )}
-                {formData.type === 'withdrawal' && (
-                  <>
-                    <div className="flex justify-between">
-                      <span>Dr: Owner Drawings</span>
-                      <span className="font-mono">RWF {parseFloat(formData.amount || '0').toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Cr: {formData.method === 'cash' ? 'Petty Cash' : 'Cash at Bank'}</span>
-                      <span className="font-mono">RWF {parseFloat(formData.amount || '0').toLocaleString()}</span>
-                    </div>
-                  </>
-                )}
-                <p className="text-xs text-blue-700 mt-2">
-                  ✅ This will automatically update: General Ledger, Cash Book, Capital Register, and Shareholder Records
+                <p className="text-[10px] text-blue-700 mt-2 italic uppercase">
+                  Automated Journal Posting Enabled
                 </p>
               </div>
             </div>
           )}
 
-          <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>
+          <div className="flex justify-end gap-2 pt-4 border-t">
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit">
-              Record & Post Transaction
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Post to Ledger"
+              )}
             </Button>
           </div>
         </form>

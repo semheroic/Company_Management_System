@@ -1,18 +1,51 @@
-const express = require('express'), mysql = require('mysql2'), cors = require('cors'), 
-      dotenv = require('dotenv'), multer = require('multer'), fs = require('fs'), 
-      fsPromises = fs.promises, path = require('path');
+const express = require('express'),
+    mysql = require('mysql2'),
+    cors = require('cors'),
+    dotenv = require('dotenv'),
+    multer = require('multer'),
+    fs = require('fs'),
+    fsPromises = fs.promises,
+    path = require('path');
 
 dotenv.config();
 const app = express(), PORT = process.env.PORT || 5000;
 
-app.use(cors()); app.use(express.json());
+app.use(cors());
+app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads');
 
+// --- 1. ERROR HANDLING UTILITIES ---
+
+class AppError extends Error {
+    constructor(message, statusCode) {
+        super(message);
+        this.statusCode = statusCode;
+        this.isOperational = true;
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+const asyncHandler = fn => (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+// --- 2. DATABASE CONNECTION ---
+
 const db = mysql.createPool({
-    host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASSWORD, 
-    database: process.env.DB_NAME, waitForConnections: true, connectionLimit: 10
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10
 }).promise();
+
+db.getConnection()
+    .then(conn => { console.log('✅ DB Connected'); conn.release(); })
+    .catch(err => { console.error('❌ DB Connection Error:', err.message); process.exit(1); });
+
+// --- 3. FILE UPLOADS & UTILS ---
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, 'uploads/'),
@@ -20,136 +53,221 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-const safeDelete = async (path) => { if (path) try { await fsPromises.unlink(path); } catch {} };
+const safeDelete = async (filePath) => { if (filePath) try { await fsPromises.unlink(filePath); } catch { } };
 const normalizePath = (p) => p ? p.replace(/\\/g, '/') : null;
 
-// Middleware: Validate Active Company
-const validateCompany = async (req, res, next) => {
-    const id = req.headers['x-company-id'] || req.params.companyId || req.params.id;
-    if (!id) return next();
-    try {
-        const [rows] = await db.query('SELECT id, status FROM companies WHERE id = ?', [id]);
-        if (!rows.length || rows[0].status !== 'active') {
-            if (req.file) await safeDelete(req.file.path);
-            return res.status(rows.length ? 403 : 404).json({ error: rows.length ? 'Company inactive' : 'Company not found' });
-        }
-        req.companyId = parseInt(id); next();
-    } catch (err) { res.status(500).json({ error: 'DB Error' }); }
-};
+// --- 4. MIDDLEWARE ---
+
+// --- 4. MIDDLEWARE ---
+
+const validateCompany = asyncHandler(async (req, res, next) => {
+    // Check Headers, URL Params, AND Request Body
+    const id = 
+        req.headers['x-company-id'] || 
+        req.params.companyId || 
+        req.params.id || 
+        req.body.company_id; // Added this check
+
+    if (!id) {
+        // If no ID is provided at all, we can't validate, 
+        // so we move on or throw an error based on your needs.
+        return next(); 
+    }
+
+    const [rows] = await db.query('SELECT id, status FROM companies WHERE id = ?', [id]);
+
+    if (!rows.length) throw new AppError('Company not found', 404);
+    if (rows[0].status !== 'active') throw new AppError('Company is inactive', 403);
+
+    req.companyId = parseInt(id);
+    next();
+});
+
+// --- 5. ROUTES ---
 
 // --- COMPANY ROUTES ---
-app.get('/api/companies', async (req, res) => {
+app.get('/api/companies', asyncHandler(async (req, res) => {
     const [rows] = await db.query('SELECT * FROM companies ORDER BY created_at DESC');
     res.json(rows);
-});
+}));
 
-app.post('/api/company', async (req, res) => {
-    try {
-        const [reslt] = await db.query(`INSERT INTO companies SET ?, status = 'active'`, [req.body]);
-        const [[rows]] = await db.query('SELECT * FROM companies WHERE id = ?', [reslt.insertId]);
-        res.status(201).json(rows);
-    } catch (err) { res.status(400).json({ error: err.code === 'ER_DUP_ENTRY' ? 'TIN exists' : 'Failed' }); }
-});
+app.post('/api/company', asyncHandler(async (req, res) => {
+    if (req.body.name) req.body.name = req.body.name.trim();
+    const [result] = await db.query(`INSERT INTO companies SET ?, status = 'active'`, [req.body]);
+    const [[company]] = await db.query('SELECT * FROM companies WHERE id = ?', [result.insertId]);
+    res.status(201).json(company);
+}));
 
-app.get('/api/company/:id', validateCompany, async (req, res) => {
-    const [[rows]] = await db.query('SELECT * FROM companies WHERE id = ?', [req.companyId]);
-    res.json(rows);
-});
+app.get('/api/company/:id', validateCompany, asyncHandler(async (req, res) => {
+    const [[company]] = await db.query('SELECT * FROM companies WHERE id = ?', [req.companyId]);
+    res.json(company);
+}));
 
-app.put('/api/company/:id', validateCompany, async (req, res) => {
+app.put('/api/company/:id', validateCompany, asyncHandler(async (req, res) => {
     await db.query('UPDATE companies SET ?, updated_at = NOW() WHERE id = ?', [req.body, req.companyId]);
-    const [[rows]] = await db.query('SELECT * FROM companies WHERE id = ?', [req.companyId]);
-    res.json(rows);
-});
+    const [[company]] = await db.query('SELECT * FROM companies WHERE id = ?', [req.companyId]);
+    res.json(company);
+}));
 
-// --- MEMBER ROUTES ---
-app.get('/api/company/:companyId/members', validateCompany, async (req, res) => {
+// --- MEMBER ROUTES (UNIFIED REGISTRY) ---
+app.get('/api/company/:companyId/members', validateCompany, asyncHandler(async (req, res) => {
     const [rows] = await db.query('SELECT * FROM company_members WHERE company_id = ?', [req.companyId]);
     res.json(rows);
-});
+}));
 
-app.post('/api/company/:companyId/members', upload.single('file'), validateCompany, async (req, res) => {
-    try {
-        const memberData = { 
-            ...req.body, 
-            company_id: req.companyId, 
-            document_path: normalizePath(req.file?.path),
-            join_date: req.body.join_date || new Date().toISOString().split('T')[0],
-            status: req.body.status || 'Active'
-        };
+app.post('/api/company/:companyId/members', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
+    const memberData = {
+        ...req.body,
+        company_id: req.companyId,
+        document_path: normalizePath(req.file?.path),
+        join_date: req.body.join_date || new Date().toISOString().split('T')[0],
+        status: req.body.status || 'Active'
+    };
+    const [result] = await db.query('INSERT INTO company_members SET ?', [memberData]);
+    const [[member]] = await db.query('SELECT * FROM company_members WHERE id = ?', [result.insertId]);
+    res.status(201).json(member);
+}));
 
-        const [result] = await db.query('INSERT INTO company_members SET ?', [memberData]);
-        const [[row]] = await db.query('SELECT * FROM company_members WHERE id = ?', [result.insertId]);
-        res.status(201).json(row);
-    } catch (err) {
-        if (req.file) await safeDelete(req.file.path);
-        res.status(400).json({ error: 'Failed to add member' });
-    }
-});
-app.put('/api/company/:companyId/members/:memberId', upload.single('file'), validateCompany, async (req, res) => {
-    try {
-        const { memberId } = req.params;
-        
-        // 1. Check if member exists and get old file path
-        const [[oldMember]] = await db.query('SELECT document_path FROM company_members WHERE id = ? AND company_id = ?', [memberId, req.companyId]);
-        if (!oldMember) return res.status(404).json({ error: 'Member not found' });
+app.put('/api/company/:companyId/members/:memberId', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
+    const { memberId } = req.params;
+    const [[oldMember]] = await db.query('SELECT document_path FROM company_members WHERE id = ? AND company_id = ?', [memberId, req.companyId]);
+    if (!oldMember) throw new AppError('Member not found', 404);
 
-        // 2. Prepare update data (Keep old file if no new one is uploaded)
-        const updateData = { 
-            ...req.body, 
-            document_path: req.file ? normalizePath(req.file.path) : oldMember.document_path,
-            // Ensure status and join_date are preserved if not in body
-            status: req.body.status || 'Active'
-        };
+    const updateData = {
+        ...req.body,
+        document_path: req.file ? normalizePath(req.file.path) : oldMember.document_path,
+        status: req.body.status || 'Active'
+    };
+    await db.query('UPDATE company_members SET ? WHERE id = ?', [updateData, memberId]);
+    if (req.file && oldMember.document_path) await safeDelete(oldMember.document_path);
+    const [[updatedMember]] = await db.query('SELECT * FROM company_members WHERE id = ?', [memberId]);
+    res.json(updatedMember);
+}));
 
-        // 3. Execute Update
-        await db.query('UPDATE company_members SET ? WHERE id = ?', [updateData, memberId]);
-
-        // 4. Cleanup: Delete old file if a new one was successfully uploaded
-        if (req.file && oldMember.document_path) await safeDelete(oldMember.document_path);
-
-        const [[updatedRow]] = await db.query('SELECT * FROM company_members WHERE id = ?', [memberId]);
-        res.json(updatedRow);
-    } catch (err) {
-        if (req.file) await safeDelete(req.file.path);
-        console.error(err);
-        res.status(400).json({ error: 'Update failed' });
-    }
-});
-app.delete('/api/company/:companyId/members/:memberId', validateCompany, async (req, res) => {
+app.delete('/api/company/:companyId/members/:memberId', validateCompany, asyncHandler(async (req, res) => {
     const [[member]] = await db.query('SELECT document_path FROM company_members WHERE id = ? AND company_id = ?', [req.params.memberId, req.companyId]);
-    if (!member) return res.status(404).json({ error: 'Not found' });
+    if (!member) throw new AppError('Member not found', 404);
     await db.query('DELETE FROM company_members WHERE id = ?', [req.params.memberId]);
     await safeDelete(member.document_path);
-    res.json({ success: true });
-});
+    res.json({ success: true, message: 'Member deleted successfully' });
+}));
 
-// --- SHARE TRANSFER ---
-app.post('/api/company/:companyId/shares/transfer', validateCompany, async (req, res) => {
+// --- CAPITAL STRUCTURE & SHAREHOLDERS ---
+
+// GET Shareholders (Members with shares > 0)
+app.get('/api/company/:companyId/shareholders', validateCompany, asyncHandler(async (req, res) => {
+    const [shareholders] = await db.query(
+        'SELECT *, (shares_held / (SELECT SUM(shares_held) FROM company_members WHERE company_id = ?)) * 100 as share_percentage FROM company_members WHERE company_id = ? AND shares_held > 0',
+        [req.companyId, req.companyId]
+    );
+    res.json(shareholders);
+}));
+
+app.get('/api/company/:companyId/capital-structure', validateCompany, asyncHandler(async (req, res) => {
+    const [[structure]] = await db.query('SELECT * FROM company_capital_structure WHERE company_id = ?', [req.companyId]);
+    if (!structure) throw new AppError('Capital structure not initialized', 404);
+    res.json(structure);
+}));
+
+app.post('/api/company/:companyId/capital-structure', validateCompany, asyncHandler(async (req, res) => {
+    const { authorized_shares, share_price, currency, capital_type } = req.body;
+    await db.query(`
+        INSERT INTO company_capital_structure (company_id, authorized_shares, share_price, currency, capital_type)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE 
+            authorized_shares = VALUES(authorized_shares), share_price = VALUES(share_price), 
+            currency = VALUES(currency), capital_type = VALUES(capital_type), updated_at = NOW()
+    `, [req.companyId, authorized_shares, share_price, currency || 'RWF', capital_type || 'ordinary']);
+    const [[updated]] = await db.query('SELECT * FROM company_capital_structure WHERE company_id = ?', [req.companyId]);
+    res.json(updated);
+}));
+
+// --- CAPITAL ENTRIES / LEDGER ---
+app.get('/api/company/:companyId/capital-entries', validateCompany, asyncHandler(async (req, res) => {
+    const [entries] = await db.query(
+        'SELECT c.*, m.name as shareholder_name FROM capital_entries c LEFT JOIN company_members m ON c.shareholder_id = m.id WHERE c.company_id = ? ORDER BY c.created_at DESC',
+        [req.companyId]
+    );
+    res.json(entries);
+}));
+
+app.get('/api/company/:companyId/capital/ledger', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT c.*, m.name as shareholder_name FROM capital_entries c
+        JOIN company_members m ON c.shareholder_id = m.id
+        WHERE c.company_id = ? ORDER BY c.date_contributed DESC`, [req.companyId]);
+    res.json(rows);
+}));
+
+app.post('/api/company/:companyId/capital/entry', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const entryData = {
+            company_id: req.companyId, shareholder_id: req.body.shareholder_id,
+            amount: req.body.amount, date_contributed: req.body.date_contributed,
+            method: req.body.method, description: req.body.description,
+            entry_type: req.body.entry_type, status: req.body.status || 'pending',
+            file_url: normalizePath(req.file?.path), created_by: req.body.created_by || 'System'
+        };
+        const [result] = await conn.query('INSERT INTO capital_entries SET ?', [entryData]);
+        if (entryData.status === 'confirmed') {
+            const adj = entryData.entry_type === 'contribution' ? entryData.amount : -entryData.amount;
+            await conn.query('UPDATE company_members SET shares_held = shares_held + ? WHERE id = ?', [adj, entryData.shareholder_id]);
+        }
+        await conn.commit();
+        res.status(201).json({ success: true, id: result.insertId });
+    } catch (err) { await conn.rollback(); throw err; } finally { conn.release(); }
+}));
+
+// --- BENEFICIAL OWNERS (FILTERED FROM MEMBERS) ---
+app.get('/api/company/:companyId/beneficial-owners', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM company_members WHERE company_id = ? AND is_beneficial_owner = 1 ORDER BY shares_held DESC', [req.companyId]);
+    res.json(rows);
+}));
+
+// POST/PUT/DELETE for dedicated beneficial_owners table (if you still use both)
+app.post('/api/company/:companyId/beneficial-owners', validateCompany, asyncHandler(async (req, res) => {
+    const boData = { ...req.body, company_id: req.companyId, control_nature: JSON.stringify(req.body.control_nature || []) };
+    const [result] = await db.query('INSERT INTO beneficial_owners SET ?', [boData]);
+    const [[newBo]] = await db.query('SELECT * FROM beneficial_owners WHERE id = ?', [result.insertId]);
+    res.status(201).json(newBo);
+}));
+
+app.put('/api/company/:companyId/beneficial-owners/:id', validateCompany, asyncHandler(async (req, res) => {
+    const updateData = { ...req.body, control_nature: req.body.control_nature ? JSON.stringify(req.body.control_nature) : undefined };
+    await db.query('UPDATE beneficial_owners SET ? WHERE id = ? AND company_id = ?', [updateData, req.params.id, req.companyId]);
+    res.json({ success: true });
+}));
+
+app.delete('/api/company/:companyId/beneficial-owners/:id', validateCompany, asyncHandler(async (req, res) => {
+    const [docs] = await db.query('SELECT document_url FROM beneficial_owner_documents WHERE beneficial_owner_id = ?', [req.params.id]);
+    for (const doc of docs) { await safeDelete(doc.document_url); }
+    await db.query('DELETE FROM beneficial_owners WHERE id = ? AND company_id = ?', [req.params.id, req.companyId]);
+    res.json({ success: true });
+}));
+
+// --- SHARE TRANSFERS ---
+app.post('/api/company/:companyId/shares/transfer', validateCompany, asyncHandler(async (req, res) => {
     const { fromMemberId, toMemberId, amount, notes, date } = req.body;
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         const [[sender]] = await conn.query('SELECT shares_held FROM company_members WHERE id=? AND company_id=? FOR UPDATE', [fromMemberId, req.companyId]);
-        
-        if (!sender || sender.shares_held < amount) throw new Error('Insufficient shares');
+        if (!sender || sender.shares_held < amount) throw new AppError('Insufficient shares', 400);
 
         await conn.query('UPDATE company_members SET shares_held = shares_held - ? WHERE id=?', [amount, fromMemberId]);
         await conn.query('UPDATE company_members SET shares_held = shares_held + ? WHERE id=?', [amount, toMemberId]);
-        await conn.query('INSERT INTO share_transfer SET ?', { 
-            company_id: req.companyId, from_member_id: fromMemberId, to_member_id: toMemberId, 
-            shares_amount: amount, transaction_date: date || new Date().toISOString().split('T')[0], notes 
+        await conn.query('INSERT INTO share_transfer SET ?', {
+            company_id: req.companyId, from_member_id: fromMemberId, to_member_id: toMemberId,
+            shares_amount: amount, transaction_date: date || new Date().toISOString().split('T')[0], notes
         });
-
         await conn.commit();
         res.json({ success: true });
-    } catch (err) {
-        await conn.rollback();
-        res.status(400).json({ error: err.message });
-    } finally { conn.release(); }
-});
+    } catch (err) { await conn.rollback(); throw err; } finally { conn.release(); }
+}));
 
-app.get('/api/company/:companyId/shares/history', validateCompany, async (req, res) => {
+app.get('/api/company/:companyId/shares/history', validateCompany, asyncHandler(async (req, res) => {
     const [rows] = await db.query(`
         SELECT t.*, m1.name as from_member_name, m2.name as to_member_name 
         FROM share_transfer t 
@@ -157,65 +275,303 @@ app.get('/api/company/:companyId/shares/history', validateCompany, async (req, r
         LEFT JOIN company_members m2 ON t.to_member_id = m2.id 
         WHERE t.company_id = ? ORDER BY t.created_at DESC`, [req.companyId]);
     res.json(rows);
-});
+}));
 
-app.delete('/api/company/:companyId/shares/:txnId', validateCompany, async (req, res) => {
-    const conn = await db.getConnection();
-    try {
-        await conn.beginTransaction();
-        const [[t]] = await conn.query('SELECT * FROM share_transfer WHERE id = ?', [req.params.txnId]);
-        if (!t) throw new Error('Not found');
-
-        await conn.query('UPDATE company_members SET shares_held = shares_held + ? WHERE id = ?', [t.shares_amount, t.from_member_id]);
-        await conn.query('UPDATE company_members SET shares_held = shares_held - ? WHERE id = ?', [t.shares_amount, t.to_member_id]);
-        await conn.query('DELETE FROM share_transfer WHERE id = ?', [req.params.txnId]);
-        
-        await conn.commit(); res.json({ success: true });
-    } catch (err) { await conn.rollback(); res.status(400).json({ error: err.message }); } 
-    finally { conn.release(); }
-});
-app.put('/api/company/:companyId/shares/:txnId', validateCompany, async (req, res) => {
-    const { amount, notes, date } = req.body;
-    const conn = await db.getConnection();
-    try {
-        await conn.beginTransaction();
-        const [[t]] = await conn.query('SELECT * FROM share_transfer WHERE id = ? FOR UPDATE', [req.params.txnId]);
-        if (!t) throw new Error('Transaction not found');
-
-        // 1. Reverse old balances
-        await conn.query('UPDATE company_members SET shares_held = shares_held + ? WHERE id = ?', [t.shares_amount, t.from_member_id]);
-        await conn.query('UPDATE company_members SET shares_held = shares_held - ? WHERE id = ?', [t.shares_amount, t.to_member_id]);
-
-        // 2. Check if sender has enough for the NEW amount
-        const [[sender]] = await conn.query('SELECT shares_held FROM company_members WHERE id = ?', [t.from_member_id]);
-        if (sender.shares_held < amount) throw new Error('Insufficient shares for updated amount');
-
-        // 3. Apply new balances
-        await conn.query('UPDATE company_members SET shares_held = shares_held - ? WHERE id = ?', [amount, t.from_member_id]);
-        await conn.query('UPDATE company_members SET shares_held = shares_held + ? WHERE id = ?', [amount, t.to_member_id]);
-
-        // 4. Update the transfer record
-        await conn.query('UPDATE share_transfer SET shares_amount=?, notes=?, transaction_date=? WHERE id=?', 
-            [amount, notes, date || t.transaction_date, req.params.txnId]);
-
-        await conn.commit();
-        res.json({ success: true });
-    } catch (err) {
-        await conn.rollback();
-        res.status(400).json({ error: err.message });
-    } finally { conn.release(); }
-});
-// --- DOCUMENTS ---
-app.post('/api/company/:companyId/upload', upload.single('file'), validateCompany, async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file' });
-    const [reslt] = await db.query('INSERT INTO company_documents SET ?', { company_id: req.companyId, name: req.file.originalname, file_path: normalizePath(req.file.path) });
-    const [[doc]] = await db.query('SELECT * FROM company_documents WHERE id = ?', [reslt.insertId]);
+// --- DOCUMENTS & MAPPINGS ---
+app.post('/api/company/:companyId/upload', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
+    if (!req.file) throw new AppError('No file provided', 400);
+    const [result] = await db.query('INSERT INTO company_documents SET ?', {
+        company_id: req.companyId, name: req.file.originalname, file_path: normalizePath(req.file.path)
+    });
+    const [[doc]] = await db.query('SELECT * FROM company_documents WHERE id = ?', [result.insertId]);
     res.status(201).json(doc);
-});
+}));
 
+app.get('/api/company/:companyId/ownership-mappings', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT om.*, m.name as member_name, bo.name as beneficial_owner_name
+        FROM ownership_mappings om
+        JOIN company_members m ON om.member_id = m.id
+        JOIN company_members bo ON om.beneficial_owner_id = bo.id
+        WHERE om.company_id = ?`, [req.companyId]);
+    res.json(rows);
+}));
+
+// --- FINANCIAL SUMMARY ---
+app.get('/api/company/:companyId/capital/summary', validateCompany, asyncHandler(async (req, res) => {
+    const [summary] = await db.query(`
+        SELECT 
+            SUM(CASE WHEN entry_type = 'contribution' AND status = 'confirmed' THEN amount ELSE 0 END) as total_contributions,
+            SUM(CASE WHEN entry_type = 'withdrawal' AND status = 'confirmed' THEN amount ELSE 0 END) as total_withdrawals
+        FROM capital_entries WHERE company_id = ?`, [req.companyId]);
+    const totals = summary[0];
+    res.json({
+        total_capital: (totals.total_contributions || 0) - (totals.total_withdrawals || 0),
+        total_contributions: totals.total_contributions || 0,
+        total_withdrawals: totals.total_withdrawals || 0
+    });
+}));
+
+// --- GLOBAL ERROR HANDLER ---
 app.use(async (err, req, res, next) => {
     if (req.file) await safeDelete(req.file.path);
-    res.status(500).json({ error: err.message || 'Internal Server Error' });
-});
+    let statusCode = err.statusCode || 500;
+    let message = err.message || 'Internal Server Error';
 
-app.listen(PORT, () => console.log(`🚀 http://localhost:${PORT}`));
+    if (err.code === 'ER_DUP_ENTRY') { statusCode = 409; message = 'Unique record already exists.'; }
+    else if (err.code === 'ER_BAD_FIELD_ERROR') { statusCode = 400; message = 'Invalid data field.'; }
+
+    console.error(`[Error] ${statusCode} - ${err.message}`);
+    res.status(statusCode).json({
+        success: false,
+        error: message,
+        ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    });
+});
+// --- MEETING MINUTES ROUTES ---
+
+// GET All meetings for a company
+app.get('/api/company/:companyId/meetings', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM meeting_minutes WHERE company_id = ? ORDER BY date DESC, time DESC', 
+        [req.companyId]
+    );
+
+    // Parse JSON strings back to arrays for the React frontend
+    const meetings = rows.map(row => ({
+        ...row,
+        attendees: typeof row.attendees === 'string' ? JSON.parse(row.attendees) : row.attendees,
+        agenda: typeof row.agenda === 'string' ? JSON.parse(row.agenda) : row.agenda,
+        decisions: typeof row.decisions === 'string' ? JSON.parse(row.decisions) : row.decisions,
+        action_items: typeof row.action_items === 'string' ? JSON.parse(row.action_items) : row.action_items
+    }));
+
+    res.json(meetings);
+}));
+
+// POST New Meeting
+// --- UPDATED POST New Meeting ---
+app.post('/api/company/:companyId/meetings', validateCompany, asyncHandler(async (req, res) => {
+    const meetingData = {
+        // Force the ID from the validated middleware/URL to prevent cross-company injection
+        company_id: req.companyId, 
+        title: req.body.title,
+        type: req.body.type,
+        date: req.body.date,
+        time: req.body.time,
+        location: req.body.location,
+        chairperson: req.body.chairperson,
+        secretary: req.body.secretary,
+        discussions: req.body.discussions,
+        status: req.body.status || 'Scheduled',
+        next_meeting_date: req.body.next_meeting_date || null,
+        // Ensure these are stringified for MariaDB
+        attendees: JSON.stringify(req.body.attendees || []),
+        agenda: JSON.stringify(req.body.agenda || []),
+        decisions: JSON.stringify(req.body.decisions || []),
+        action_items: JSON.stringify(req.body.action_items || []) 
+    };
+
+    const [result] = await db.query('INSERT INTO meeting_minutes SET ?', [meetingData]);
+    const [[newMeeting]] = await db.query('SELECT * FROM meeting_minutes WHERE id = ?', [result.insertId]);
+    
+    res.status(201).json(newMeeting);
+}));
+// GET Meeting Statistics
+app.get('/api/company/:companyId/meetings/stats', validateCompany, asyncHandler(async (req, res) => {
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+
+    const [stats] = await db.query(`
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'Scheduled' THEN 1 ELSE 0 END) as scheduled,
+            SUM(CASE WHEN YEAR(date) = ? THEN 1 ELSE 0 END) as thisYear,
+            SUM(CASE WHEN YEAR(date) = ? AND MONTH(date) = ? THEN 1 ELSE 0 END) as thisMonth
+        FROM meeting_minutes 
+        WHERE company_id = ?
+    `, [currentYear, currentYear, currentMonth, req.companyId]);
+
+    res.json(stats[0]);
+}));
+
+// PUT Update Meeting
+app.put('/api/company/:companyId/meetings/:id', validateCompany, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const {
+        title, type, date, time, location, chairperson, secretary,
+        attendees, agenda, discussions, decisions, action_items,
+        next_meeting_date, status
+    } = req.body;
+
+    const sql = `
+      UPDATE meeting_minutes 
+      SET 
+        title = ?, type = ?, date = ?, time = ?, location = ?, 
+        chairperson = ?, secretary = ?, attendees = ?, agenda = ?, 
+        discussions = ?, decisions = ?, action_items = ?, 
+        next_meeting_date = ?, status = ?
+      WHERE id = ? AND company_id = ?
+    `;
+
+    const values = [
+        title, type, date, time, location, chairperson, secretary,
+        JSON.stringify(attendees || []),
+        JSON.stringify(agenda || []),
+        discussions,
+        JSON.stringify(decisions || []),
+        JSON.stringify(action_items || []),
+        next_meeting_date || null,
+        status,
+        id,
+        req.companyId // Taken from validateCompany middleware
+    ];
+
+    const [result] = await db.query(sql, values);
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Meeting not found or does not belong to this company', 404);
+    }
+
+    res.json({ success: true, message: "Meeting updated successfully" });
+}));
+
+// DELETE Meeting
+app.delete('/api/company/:companyId/meetings/:meetingId', validateCompany, asyncHandler(async (req, res) => {
+    const { meetingId } = req.params;
+    const [result] = await db.query('DELETE FROM meeting_minutes WHERE id = ? AND company_id = ?', [meetingId, req.companyId]);
+    
+    if (result.affectedRows === 0) throw new AppError('Meeting not found', 404);
+    res.json({ success: true, message: 'Meeting deleted' });
+}));
+// ==========================================
+// --- BUSINESS PLAN & STRATEGY ROUTES ---
+// ==========================================
+
+// GET All Business Plans
+app.get('/api/company/:companyId/business-plans', validateCompany, asyncHandler(async (req, res) => {
+    const [plans] = await db.query(
+        'SELECT * FROM business_plans WHERE company_id = ? ORDER BY year DESC, version DESC', 
+        [req.companyId]
+    );
+    res.json(plans);
+}));
+
+// GET Active Business Plan
+app.get('/api/company/:companyId/business-plans/active', validateCompany, asyncHandler(async (req, res) => {
+    const [[activePlan]] = await db.query(
+        "SELECT * FROM business_plans WHERE company_id = ? AND status = 'active' LIMIT 1", 
+        [req.companyId]
+    );
+    res.json(activePlan || null);
+}));
+
+// POST Create New Business Plan
+app.post('/api/company/:companyId/business-plans', validateCompany, asyncHandler(async (req, res) => {
+    const planData = {
+        company_id: req.companyId,
+        title: req.body.title,
+        year: req.body.year,
+        description: req.body.description,
+        strategic_goals: req.body.strategic_goals,
+        mission_statement: req.body.mission_statement,
+        vision_statement: req.body.vision_statement,
+        swot_analysis: req.body.swot_analysis,
+        financial_projections: req.body.financial_projections,
+        market_analysis: req.body.market_analysis,
+        competitive_analysis: req.body.competitive_analysis,
+        uploaded_by: req.body.uploaded_by || 'System',
+        status: req.body.status || 'draft',
+        version: 1
+    };
+
+    const [result] = await db.query('INSERT INTO business_plans SET ?', [planData]);
+    const [[newPlan]] = await db.query('SELECT * FROM business_plans WHERE id = ?', [result.insertId]);
+    
+    res.status(201).json(newPlan);
+}));
+
+// PUT Update Business Plan (Changed :id to :planId)
+app.put('/api/company/:companyId/business-plans/:planId', validateCompany, asyncHandler(async (req, res) => {
+    const { planId } = req.params; // Using specific planId
+    
+    const updateData = { ...req.body };
+    delete updateData.id;
+    delete updateData.company_id;
+    delete updateData.created_at;
+    delete updateData.updated_at;
+    delete updateData.version;
+
+    const [result] = await db.query(
+        'UPDATE business_plans SET ?, version = version + 1 WHERE id = ? AND company_id = ?', 
+        [updateData, planId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Business plan not found or access denied', 404);
+    }
+
+    const [[updatedPlan]] = await db.query('SELECT * FROM business_plans WHERE id = ?', [planId]);
+    res.json(updatedPlan);
+}));
+
+// PATCH Archive Business Plan
+app.patch('/api/company/:companyId/business-plans/:planId/archive', validateCompany, asyncHandler(async (req, res) => {
+    const { planId } = req.params;
+    
+    const [result] = await db.query(
+        "UPDATE business_plans SET status = 'archived' WHERE id = ? AND company_id = ?", 
+        [planId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) throw new AppError('Business plan not found', 404);
+    
+    res.json({ success: true, message: 'Plan archived' });
+}));
+
+// PATCH Set Active Business Plan
+app.patch('/api/company/:companyId/business-plans/:planId/active', validateCompany, asyncHandler(async (req, res) => {
+    const { planId } = req.params;
+    const conn = await db.getConnection();
+    
+    try {
+        await conn.beginTransaction();
+        
+        // 1. Archive current active plans for this company
+        await conn.query(
+            "UPDATE business_plans SET status = 'archived' WHERE company_id = ? AND status = 'active'", 
+            [req.companyId]
+        );
+        
+        // 2. Set new plan to active
+        const [result] = await conn.query(
+            "UPDATE business_plans SET status = 'active' WHERE id = ? AND company_id = ?", 
+            [planId, req.companyId]
+        );
+
+        if (result.affectedRows === 0) throw new AppError('Business plan not found', 404);
+
+        await conn.commit();
+        res.json({ success: true, message: 'Plan set to active' });
+        
+    } catch (err) {
+        await conn.rollback();
+        throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+// DELETE Business Plan
+app.delete('/api/company/:companyId/business-plans/:planId', validateCompany, asyncHandler(async (req, res) => {
+    const { planId } = req.params;
+    const [result] = await db.query('DELETE FROM business_plans WHERE id = ? AND company_id = ?', [planId, req.companyId]);
+    
+    if (result.affectedRows === 0) throw new AppError('Business plan not found', 404);
+    
+    res.json({ success: true, message: 'Business plan deleted successfully' });
+}));
+app.use((req, res) => { res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found` }); });
+
+app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));

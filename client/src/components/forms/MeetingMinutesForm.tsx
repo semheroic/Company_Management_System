@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { X, Plus } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { useToast } from "@/hooks/use-toast";
 
 interface Attendee {
   id: string;
@@ -33,8 +34,8 @@ interface MeetingData {
   agenda: string[];
   discussions: string;
   decisions: string[];
-  actionItems: string[];
-  nextMeetingDate: string;
+  action_items: string[]; // Aligned with backend snake_case
+  next_meeting_date: string; // Aligned with backend snake_case
   status: string;
 }
 
@@ -45,6 +46,10 @@ interface MeetingMinutesFormProps {
 }
 
 export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinutesFormProps) {
+  const { companyId } = useParams();
+  const { toast } = useToast();
+
+  // Initialize state with backend-compatible naming
   const [formData, setFormData] = useState<MeetingData>({
     title: meeting?.title || '',
     type: meeting?.type || 'Board',
@@ -57,11 +62,13 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
     agenda: meeting?.agenda || [''],
     discussions: meeting?.discussions || '',
     decisions: meeting?.decisions || [''],
-    actionItems: meeting?.actionItems || [''],
-    nextMeetingDate: meeting?.nextMeetingDate || '',
+    action_items: meeting?.action_items || [''],
+    next_meeting_date: meeting?.next_meeting_date || '',
     status: meeting?.status || 'Scheduled',
     ...meeting
   });
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleInputChange = (field: keyof MeetingData, value: any) => {
     setFormData(prev => ({
@@ -98,40 +105,53 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
     }));
   };
 
-  const addListItem = (field: 'agenda' | 'decisions' | 'actionItems') => {
+  const addListItem = (field: 'agenda' | 'decisions' | 'action_items') => {
     setFormData(prev => ({
       ...prev,
       [field]: [...prev[field], '']
     }));
   };
 
-  const removeListItem = (field: 'agenda' | 'decisions' | 'actionItems', index: number) => {
+  const removeListItem = (field: 'agenda' | 'decisions' | 'action_items', index: number) => {
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].filter((_, i) => i !== index)
     }));
   };
 
-  const updateListItem = (field: 'agenda' | 'decisions' | 'actionItems', index: number, value: string) => {
+  const updateListItem = (field: 'agenda' | 'decisions' | 'action_items', index: number, value: string) => {
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].map((item, i) => i === index ? value : item)
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
     
-    // Filter out empty items
-    const cleanedData = {
-      ...formData,
-      agenda: formData.agenda.filter(item => item.trim() !== ''),
-      decisions: formData.decisions.filter(item => item.trim() !== ''),
-      actionItems: formData.actionItems.filter(item => item.trim() !== ''),
-      attendees: formData.attendees.filter(attendee => attendee.name.trim() !== '')
-    };
+    try {
+      // 1. Filter out empty items
+      // 2. EXPLICITLY include the companyId from the URL
+      const cleanedData: MeetingData = {
+        ...formData,
+        company_id: Number(companyId), // Ensure this matches backend expectation
+        agenda: formData.agenda.filter(item => item.trim() !== ''),
+        decisions: formData.decisions.filter(item => item.trim() !== ''),
+        action_items: formData.action_items.filter(item => item.trim() !== ''),
+        attendees: formData.attendees.filter(attendee => attendee.name.trim() !== '')
+      };
 
-    onSubmit(cleanedData);
+      await onSubmit(cleanedData);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "There was a problem processing your request.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -148,7 +168,7 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
                 id="title"
                 value={formData.title}
                 onChange={(e) => handleInputChange('title', e.target.value)}
-                placeholder="e.g., Annual General Meeting 2024"
+                placeholder="e.g., Annual General Meeting 2026"
                 required
               />
             </div>
@@ -254,7 +274,7 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {formData.attendees.map((attendee, index) => (
+            {formData.attendees.map((attendee) => (
               <div key={attendee.id} className="flex gap-3 items-end">
                 <div className="flex-1">
                   <Label>Name</Label>
@@ -380,7 +400,7 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             Action Items
-            <Button type="button" onClick={() => addListItem('actionItems')} size="sm">
+            <Button type="button" onClick={() => addListItem('action_items')} size="sm">
               <Plus className="w-4 h-4 mr-1" />
               Add Action
             </Button>
@@ -388,21 +408,21 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {formData.actionItems.map((item, index) => (
+            {formData.action_items.map((item, index) => (
               <div key={index} className="flex gap-3 items-center">
                 <div className="flex-1">
                   <Input
                     value={item}
-                    onChange={(e) => updateListItem('actionItems', index, e.target.value)}
+                    onChange={(e) => updateListItem('action_items', index, e.target.value)}
                     placeholder={`Action item ${index + 1}`}
                   />
                 </div>
-                {formData.actionItems.length > 1 && (
+                {formData.action_items.length > 1 && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => removeListItem('actionItems', index)}
+                    onClick={() => removeListItem('action_items', index)}
                   >
                     <X className="w-4 h-4" />
                   </Button>
@@ -419,23 +439,28 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
         </CardHeader>
         <CardContent>
           <div>
-            <Label htmlFor="nextMeetingDate">Next Meeting Date</Label>
+            <Label htmlFor="next_meeting_date">Next Meeting Date</Label>
             <Input
-              id="nextMeetingDate"
+              id="next_meeting_date"
               type="date"
-              value={formData.nextMeetingDate}
-              onChange={(e) => handleInputChange('nextMeetingDate', e.target.value)}
+              value={formData.next_meeting_date}
+              onChange={(e) => handleInputChange('next_meeting_date', e.target.value)}
             />
           </div>
         </CardContent>
       </Card>
 
-      <div className="flex justify-end gap-3">
-        <Button type="button" variant="outline" onClick={onCancel}>
+      <div className="flex justify-end gap-3 pb-6">
+        <Button 
+          type="button" 
+          variant="outline" 
+          onClick={onCancel}
+          disabled={isSubmitting}
+        >
           Cancel
         </Button>
-        <Button type="submit">
-          {meeting ? 'Update Meeting' : 'Create Meeting'}
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Saving...' : meeting ? 'Update Meeting' : 'Create Meeting'}
         </Button>
       </div>
     </form>
