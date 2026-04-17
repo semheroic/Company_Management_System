@@ -12,8 +12,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { X, Plus } from "lucide-react";
-import { useParams } from "react-router-dom";
-import { useToast } from "@/hooks/use-toast";
 
 interface Attendee {
   id: string;
@@ -46,9 +44,6 @@ interface MeetingMinutesFormProps {
 }
 
 export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinutesFormProps) {
-  const { companyId } = useParams();
-  const { toast } = useToast();
-
   // Initialize state with backend-compatible naming
   const [formData, setFormData] = useState<MeetingData>({
     title: meeting?.title || '',
@@ -129,13 +124,10 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    
+
     try {
-      // 1. Filter out empty items
-      // 2. EXPLICITLY include the companyId from the URL
       const cleanedData: MeetingData = {
         ...formData,
-        company_id: Number(companyId), // Ensure this matches backend expectation
         agenda: formData.agenda.filter(item => item.trim() !== ''),
         decisions: formData.decisions.filter(item => item.trim() !== ''),
         action_items: formData.action_items.filter(item => item.trim() !== ''),
@@ -143,12 +135,6 @@ export function MeetingMinutesForm({ meeting, onSubmit, onCancel }: MeetingMinut
       };
 
       await onSubmit(cleanedData);
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "There was a problem processing your request.",
-        variant: "destructive",
-      });
     } finally {
       setIsSubmitting(false);
     }

@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -19,28 +18,37 @@ interface EnhancedBeneficialOwnerFormProps {
   editData?: BeneficialOwner | null;
 }
 
-export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData }: EnhancedBeneficialOwnerFormProps) {
-  const { toast } = useToast();
-  const [formData, setFormData] = useState({
-    full_name: "",
-    nationality: "",
-    id_number: "",
-    date_of_birth: "",
-    relationship_to_company: "direct_owner",
-    ownership_percentage: "",
-    control_percentage: "",
-    has_significant_control: false,
-    control_nature: [] as string[],
-    address: "",
-    contact_info: "",
-    verification_status: "pending"
-  });
+const DEFAULT_FORM = {
+  full_name: "",
+  nationality: "",
+  id_number: "",
+  date_of_birth: "",
+  relationship_to_company: "direct_owner",
+  ownership_percentage: "",
+  control_percentage: "",
+  has_significant_control: false,
+  control_nature: [] as string[],
+  address: "",
+  contact_info: "",
+  verification_status: "pending",
+};
 
+export function EnhancedBeneficialOwnerForm({
+  open,
+  onClose,
+  onSuccess,
+  editData,
+}: EnhancedBeneficialOwnerFormProps) {
+  const { toast } = useToast();
+
+  const [formData, setFormData] = useState(DEFAULT_FORM);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [ownershipValidation, setOwnershipValidation] = useState({
     isValid: true,
-    message: ""
+    message: "",
   });
 
+  // Populate form when editing or reset when opening fresh
   useEffect(() => {
     if (editData) {
       setFormData({
@@ -52,78 +60,90 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
         ownership_percentage: editData.ownership_percentage.toString(),
         control_percentage: editData.control_percentage.toString(),
         has_significant_control: editData.has_significant_control,
-        control_nature: editData.control_nature,
-        address: editData.address,
-        contact_info: editData.contact_info || "",
-        verification_status: editData.verification_status
+        control_nature: [],           // not stored on BeneficialOwner interface
+        address: editData.physical_address || "",
+        contact_info: "",             // not stored on BeneficialOwner interface
+        verification_status: editData.verification_status,
       });
     } else {
-      setFormData({
-        full_name: "",
-        nationality: "",
-        id_number: "",
-        date_of_birth: "",
-        relationship_to_company: "direct_owner",
-        ownership_percentage: "",
-        control_percentage: "",
-        has_significant_control: false,
-        control_nature: [],
-        address: "",
-        contact_info: "",
-        verification_status: "pending"
-      });
+      setFormData(DEFAULT_FORM);
     }
+
+    // Reset validation whenever dialog opens/changes
+    setOwnershipValidation({ isValid: true, message: "" });
   }, [editData, open]);
 
+  // Async validation effect — runs when ownership/control percentages change
   useEffect(() => {
-    const ownershipPercent = parseFloat(formData.ownership_percentage || '0');
-    const controlPercent = parseFloat(formData.control_percentage || '0');
-    
-    // Validate ownership percentages
-    const validation = BeneficialOwnerService.validateOwnershipPercentages();
-    const currentTotal = validation.totalPercentage + (editData ? -editData.ownership_percentage : 0) + ownershipPercent;
-    
-    if (currentTotal > 100) {
-      setOwnershipValidation({
-        isValid: false,
-        message: `Total beneficial ownership would exceed 100% (${currentTotal.toFixed(1)}%)`
-      });
-    } else if (ownershipPercent >= 25 || controlPercent >= 25) {
-      setFormData(prev => ({ ...prev, has_significant_control: true }));
-      setOwnershipValidation({
-        isValid: true,
-        message: "Significant control detected (25%+ ownership/control)"
-      });
-    } else {
-      setOwnershipValidation({
-        isValid: true,
-        message: ""
-      });
-    }
-  }, [formData.ownership_percentage, formData.control_percentage, editData]);
+    if (!open) return;
+
+    const ownershipPercent = parseFloat(formData.ownership_percentage || "0");
+    const controlPercent = parseFloat(formData.control_percentage || "0");
+
+    let cancelled = false;
+
+    const runValidation = async () => {
+      try {
+        // ✅ Correct method name, awaited
+        const validation = await BeneficialOwnerService.validateOwnership();
+
+        if (cancelled) return;
+
+        // When editing, subtract the current owner's percentage so we don't
+        // double-count it when checking headroom
+        const existingOwnership = editData ? editData.ownership_percentage : 0;
+        const projectedTotal =
+          validation.totalPercentage - existingOwnership + ownershipPercent;
+
+        if (projectedTotal > 100) {
+          setOwnershipValidation({
+            isValid: false,
+            message: `Total beneficial ownership would exceed 100% (${projectedTotal.toFixed(1)}%)`,
+          });
+        } else if (ownershipPercent >= 25 || controlPercent >= 25) {
+          // Auto-flag significant control
+          setFormData((prev) => ({ ...prev, has_significant_control: true }));
+          setOwnershipValidation({
+            isValid: true,
+            message: "Significant control detected (25%+ ownership / control)",
+          });
+        } else {
+          setOwnershipValidation({ isValid: true, message: "" });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          // Validation endpoint unavailable — allow the user to proceed;
+          // server-side will enforce integrity.
+          console.warn("Ownership validation unavailable:", err);
+          setOwnershipValidation({ isValid: true, message: "" });
+        }
+      }
+    };
+
+    runValidation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.ownership_percentage, formData.control_percentage, editData, open]);
 
   const handleControlNatureChange = (nature: string, checked: boolean) => {
-    if (checked) {
-      setFormData(prev => ({
-        ...prev,
-        control_nature: [...prev.control_nature, nature]
-      }));
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        control_nature: prev.control_nature.filter(n => n !== nature)
-      }));
-    }
+    setFormData((prev) => ({
+      ...prev,
+      control_nature: checked
+        ? [...prev.control_nature, nature]
+        : prev.control_nature.filter((n) => n !== nature),
+    }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.full_name || !formData.nationality || !formData.id_number) {
       toast({
         title: "Validation Error",
         description: "Please fill in all required fields",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
@@ -132,51 +152,54 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
       toast({
         title: "Ownership Error",
         description: ownershipValidation.message,
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
-      const beneficialOwnerData = {
+      const beneficialOwnerData: Partial<BeneficialOwner> = {
         full_name: formData.full_name,
         nationality: formData.nationality,
         id_number: formData.id_number,
-        date_of_birth: formData.date_of_birth,
-        relationship_to_company: formData.relationship_to_company as BeneficialOwner['relationship_to_company'],
-        ownership_percentage: parseFloat(formData.ownership_percentage || '0'),
-        control_percentage: parseFloat(formData.control_percentage || '0'),
+        date_of_birth: formData.date_of_birth || undefined,
+        relationship_to_company: formData.relationship_to_company as BeneficialOwner["relationship_to_company"],
+        ownership_percentage: parseFloat(formData.ownership_percentage || "0"),
+        control_percentage: parseFloat(formData.control_percentage || "0"),
         has_significant_control: formData.has_significant_control,
-        control_nature: formData.control_nature,
-        linked_shareholder_ids: [],
-        address: formData.address,
-        contact_info: formData.contact_info,
-        document_urls: [],
-        verification_status: formData.verification_status as BeneficialOwner['verification_status']
+        physical_address: formData.address,  // ✅ mapped to correct DB column name
+        verification_status: formData.verification_status as BeneficialOwner["verification_status"],
       };
 
       if (editData) {
-        BeneficialOwnerService.updateBeneficialOwner(editData.id, beneficialOwnerData);
+        // ✅ awaited
+        await BeneficialOwnerService.updateBeneficialOwner(editData.id, beneficialOwnerData);
         toast({
           title: "Success",
-          description: "Beneficial owner updated successfully"
+          description: "Beneficial owner updated successfully",
         });
       } else {
-        BeneficialOwnerService.addBeneficialOwner(beneficialOwnerData);
+        // ✅ awaited
+        await BeneficialOwnerService.addBeneficialOwner(beneficialOwnerData);
         toast({
           title: "Success",
-          description: "Beneficial owner added successfully"
+          description: "Beneficial owner added successfully",
         });
       }
 
       onSuccess();
       onClose();
     } catch (error) {
+      console.error("Failed to save beneficial owner:", error);
       toast({
         title: "Error",
-        description: "Failed to save beneficial owner",
-        variant: "destructive"
+        description: "Failed to save beneficial owner. Please try again.",
+        variant: "destructive",
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -186,7 +209,7 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
     "Appoints/removes directors",
     "Significant influence over management",
     "Ultimate beneficial owner",
-    "Trustee/nominee arrangement"
+    "Trustee/nominee arrangement",
   ];
 
   return (
@@ -202,7 +225,7 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
         <Alert>
           <Shield className="h-4 w-4" />
           <AlertDescription>
-            Beneficial owners are the natural persons who ultimately own or control the company. 
+            Beneficial owners are the natural persons who ultimately own or control the company.
             Anyone with 25%+ ownership or control is considered to have significant control.
           </AlertDescription>
         </Alert>
@@ -220,7 +243,7 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
             </div>
 
             <div>
-              <Label htmlFor="id_number">National ID/Passport *</Label>
+              <Label htmlFor="id_number">National ID / Passport *</Label>
               <Input
                 id="id_number"
                 value={formData.id_number}
@@ -231,7 +254,10 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
 
             <div>
               <Label htmlFor="nationality">Nationality *</Label>
-              <Select value={formData.nationality} onValueChange={(value) => setFormData({ ...formData, nationality: value })}>
+              <Select
+                value={formData.nationality}
+                onValueChange={(value) => setFormData({ ...formData, nationality: value })}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select nationality" />
                 </SelectTrigger>
@@ -265,7 +291,9 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
                 max="100"
                 step="0.01"
                 value={formData.ownership_percentage}
-                onChange={(e) => setFormData({ ...formData, ownership_percentage: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, ownership_percentage: e.target.value })
+                }
                 required
               />
             </div>
@@ -279,14 +307,21 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
                 max="100"
                 step="0.01"
                 value={formData.control_percentage}
-                onChange={(e) => setFormData({ ...formData, control_percentage: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, control_percentage: e.target.value })
+                }
               />
             </div>
           </div>
 
           <div>
             <Label htmlFor="relationship_to_company">Relationship to Company *</Label>
-            <Select value={formData.relationship_to_company} onValueChange={(value) => setFormData({ ...formData, relationship_to_company: value })}>
+            <Select
+              value={formData.relationship_to_company}
+              onValueChange={(value) =>
+                setFormData({ ...formData, relationship_to_company: value })
+              }
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -309,9 +344,13 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
                   <Checkbox
                     id={option}
                     checked={formData.control_nature.includes(option)}
-                    onCheckedChange={(checked) => handleControlNatureChange(option, checked as boolean)}
+                    onCheckedChange={(checked) =>
+                      handleControlNatureChange(option, checked as boolean)
+                    }
                   />
-                  <Label htmlFor={option} className="text-sm">{option}</Label>
+                  <Label htmlFor={option} className="text-sm">
+                    {option}
+                  </Label>
                 </div>
               ))}
             </div>
@@ -337,6 +376,7 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
             />
           </div>
 
+          {/* Validation alerts */}
           {!ownershipValidation.isValid && (
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
@@ -344,7 +384,7 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
             </Alert>
           )}
 
-          {ownershipValidation.message && ownershipValidation.isValid && (
+          {ownershipValidation.isValid && ownershipValidation.message && (
             <Alert>
               <Shield className="h-4 w-4" />
               <AlertDescription>{ownershipValidation.message}</AlertDescription>
@@ -352,11 +392,17 @@ export function EnhancedBeneficialOwnerForm({ open, onClose, onSuccess, editData
           )}
 
           <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!ownershipValidation.isValid}>
-              {editData ? "Update Owner" : "Add Owner"}
+            <Button type="submit" disabled={!ownershipValidation.isValid || isSubmitting}>
+              {isSubmitting
+                ? editData
+                  ? "Updating..."
+                  : "Adding..."
+                : editData
+                ? "Update Owner"
+                : "Add Owner"}
             </Button>
           </div>
         </form>

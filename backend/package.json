@@ -4,8 +4,9 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "migrate": "node -e \"require('./lib/runMigrations').runMigrations(require('mysql2').createPool({host:process.env.DB_HOST,user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,waitForConnections:true,connectionLimit:10}).promise()).then(()=>process.exit(0)).catch(()=>process.exit(1))\""
   },
   "keywords": [],
   "author": "",

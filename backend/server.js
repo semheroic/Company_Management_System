@@ -203,17 +203,44 @@ app.post('/api/company/:companyId/capital/entry', upload.single('file'), validat
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
+        const amount = Number(req.body.amount || 0);
+        const sharesAllocated = Number(req.body.shares_allocated || 0);
+
         const entryData = {
             company_id: req.companyId, shareholder_id: req.body.shareholder_id,
-            amount: req.body.amount, date_contributed: req.body.date_contributed,
+            amount, date_contributed: req.body.date_contributed,
             method: req.body.method, description: req.body.description,
             entry_type: req.body.entry_type, status: req.body.status || 'pending',
             file_url: normalizePath(req.file?.path), created_by: req.body.created_by || 'System'
         };
+
+        if (!entryData.shareholder_id) throw new AppError('Shareholder is required', 400);
+        if (!amount || Number.isNaN(amount) || amount <= 0) throw new AppError('Amount must be greater than zero', 400);
+
+        const [[member]] = await conn.query(
+            'SELECT id, shares_held FROM company_members WHERE id = ? AND company_id = ? FOR UPDATE',
+            [entryData.shareholder_id, req.companyId]
+        );
+        if (!member) throw new AppError('Shareholder not found', 404);
+
         const [result] = await conn.query('INSERT INTO capital_entries SET ?', [entryData]);
         if (entryData.status === 'confirmed') {
-            const adj = entryData.entry_type === 'contribution' ? entryData.amount : -entryData.amount;
-            await conn.query('UPDATE company_members SET shares_held = shares_held + ? WHERE id = ?', [adj, entryData.shareholder_id]);
+            const shareDelta = entryData.entry_type === 'contribution'
+                ? sharesAllocated
+                : entryData.entry_type === 'withdrawal'
+                    ? -sharesAllocated
+                    : 0;
+
+            if (shareDelta < 0 && Number(member.shares_held || 0) < Math.abs(shareDelta)) {
+                throw new AppError('Insufficient shares for withdrawal', 400);
+            }
+
+            if (shareDelta !== 0) {
+                await conn.query(
+                    'UPDATE company_members SET shares_held = shares_held + ? WHERE id = ? AND company_id = ?',
+                    [shareDelta, entryData.shareholder_id, req.companyId]
+                );
+            }
         }
         await conn.commit();
         res.status(201).json({ success: true, id: result.insertId });
@@ -222,7 +249,38 @@ app.post('/api/company/:companyId/capital/entry', upload.single('file'), validat
 
 // --- BENEFICIAL OWNERS (FILTERED FROM MEMBERS) ---
 app.get('/api/company/:companyId/beneficial-owners', validateCompany, asyncHandler(async (req, res) => {
-    const [rows] = await db.query('SELECT * FROM company_members WHERE company_id = ? AND is_beneficial_owner = 1 ORDER BY shares_held DESC', [req.companyId]);
+    const [owners] = await db.query(
+        'SELECT * FROM beneficial_owners WHERE company_id = ? ORDER BY ownership_percentage DESC, created_at DESC',
+        [req.companyId]
+    );
+
+    if (owners.length) {
+        return res.json(owners);
+    }
+
+    const [rows] = await db.query(`
+        SELECT
+            id,
+            company_id,
+            name AS full_name,
+            nationality,
+            national_id AS id_number,
+            NULL AS date_of_birth,
+            'direct_owner' AS relationship_to_company,
+            (shares_held / NULLIF((SELECT SUM(shares_held) FROM company_members WHERE company_id = ?), 0)) * 100 AS ownership_percentage,
+            (shares_held / NULLIF((SELECT SUM(shares_held) FROM company_members WHERE company_id = ?), 0)) * 100 AS control_percentage,
+            CASE
+                WHEN (shares_held / NULLIF((SELECT SUM(shares_held) FROM company_members WHERE company_id = ?), 0)) * 100 >= 25 THEN 1
+                ELSE 0
+            END AS has_significant_control,
+            '' AS physical_address,
+            'pending' AS verification_status,
+            created_at,
+            updated_at
+        FROM company_members
+        WHERE company_id = ? AND is_beneficial_owner = 1
+        ORDER BY shares_held DESC
+    `, [req.companyId, req.companyId, req.companyId, req.companyId]);
     res.json(rows);
 }));
 
@@ -571,6 +629,243 @@ app.delete('/api/company/:companyId/business-plans/:planId', validateCompany, as
     if (result.affectedRows === 0) throw new AppError('Business plan not found', 404);
     
     res.json({ success: true, message: 'Business plan deleted successfully' });
+}));
+// --- SHARE CERTIFICATE ROUTES ---
+app.get('/api/company/:companyId/certificates', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM share_certificates WHERE company_id = ?', [req.companyId]);
+    res.json(rows);
+}));
+
+app.post('/api/company/:companyId/certificates', validateCompany, asyncHandler(async (req, res) => {
+    const [result] = await db.query('INSERT INTO share_certificates SET ?', { ...req.body, company_id: req.companyId });
+    const [[newCert]] = await db.query('SELECT * FROM share_certificates WHERE id = ?', [result.insertId]);
+    res.status(201).json(newCert);
+}));
+
+// --- COMPANY CHARGES (Mortgages/Loans) ---
+app.get('/api/company/:companyId/charges', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM company_charges WHERE company_id = ?', [req.companyId]);
+    res.json(rows);
+}));
+
+app.post('/api/company/:companyId/charges', validateCompany, asyncHandler(async (req, res) => {
+    const [result] = await db.query('INSERT INTO company_charges SET ?', { ...req.body, company_id: req.companyId });
+    res.status(201).json({ success: true, id: result.insertId });
+}));
+// --- DIVIDEND ROUTES ---
+
+// 1. Create Declaration AND calculate distributions automatically
+app.post('/api/company/:companyId/dividends/declare', validateCompany, asyncHandler(async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const { profit_amount, dividend_percentage, declaration_date, approved_by } = req.body;
+        const dividendPool = profit_amount * (dividend_percentage / 100);
+
+        // Save Declaration
+        const [decResult] = await conn.query('INSERT INTO dividend_declarations SET ?', {
+            company_id: req.companyId, profit_amount, dividend_percentage, declaration_date, approved_by, status: 'draft'
+        });
+        const declarationId = decResult.insertId;
+
+        // Fetch current shareholders (Members with shares > 0)
+        const [shareholders] = await conn.query(
+            'SELECT name, shares_held FROM company_members WHERE company_id = ? AND shares_held > 0', 
+            [req.companyId]
+        );
+
+        const totalShares = shareholders.reduce((sum, s) => sum + parseFloat(s.shares_held), 0);
+
+        // Generate Distribution Records
+        if (shareholders.length > 0 && totalShares > 0) {
+            const distributionData = shareholders.map(s => [
+                declarationId,
+                s.name,
+                s.shares_held,
+                (s.shares_held / totalShares) * dividendPool
+            ]);
+
+            await conn.query(
+                'INSERT INTO dividend_distributions (declaration_id, shareholder_name, shares_held_at_declaration, amount_allocated) VALUES ?',
+                [distributionData]
+            );
+        }
+
+        await conn.commit();
+        res.status(201).json({ success: true, declarationId });
+    } catch (err) {
+        await conn.rollback();
+        throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+// 2. Get Dividend History with Distributions
+app.get('/api/company/:companyId/dividends', validateCompany, asyncHandler(async (req, res) => {
+    const [declarations] = await db.query(
+        'SELECT * FROM dividend_declarations WHERE company_id = ? ORDER BY declaration_date DESC', 
+        [req.companyId]
+    );
+    res.json(declarations);
+}));
+
+// 3. Get Specific Breakdown for one declaration
+app.get('/api/company/:companyId/dividends/:declarationId/distributions', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM dividend_distributions WHERE declaration_id = ?', 
+        [req.params.declarationId]
+    );
+    res.json(rows);
+}));
+// --- DASHBOARD SUMMARY DATA ---
+
+// GET Optimized Capital Summary
+app.get('/api/company/:companyId/capital', validateCompany, asyncHandler(async (req, res) => {
+    // 1. Get Authorized Structure
+    const [[structure]] = await db.query(
+        'SELECT authorized_shares, share_price, currency FROM company_capital_structure WHERE company_id = ?', 
+        [req.companyId]
+    );
+
+    // 2. Get Issued Shares (Sum of all shares held by members)
+    const [[issued]] = await db.query(
+        'SELECT SUM(shares_held) as total_issued FROM company_members WHERE company_id = ?', 
+        [req.companyId]
+    );
+
+    // 3. Get Paid-up Capital (Sum of confirmed contributions)
+    const [[paid]] = await db.query(
+        "SELECT SUM(amount) as total_paid FROM capital_entries WHERE company_id = ? AND status = 'confirmed' AND entry_type = 'contribution'", 
+        [req.companyId]
+    );
+
+    res.json({
+        authorized_shares: structure?.authorized_shares || 0,
+        issued_shares: issued.total_issued || 0,
+        paid_up_capital: paid.total_paid || 0,
+        currency: structure?.currency || 'RWF'
+    });
+}));
+
+// GET Clean Shareholders List
+app.get('/api/company/:companyId/shareholders', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT 
+            id, 
+            name as full_name, 
+            shares_held as shares_count,
+            (shares_held / (SELECT SUM(shares_held) FROM company_members WHERE company_id = ?)) * 100 as ownership_percent
+        FROM company_members 
+        WHERE company_id = ? AND shares_held > 0
+        ORDER BY shares_held DESC
+    `, [req.companyId, req.companyId]);
+
+    res.json(rows);
+}));
+// --- ACCOUNTING & LEDGER ROUTES ---
+
+// 1. GET Chart of Accounts (For the dropdown)
+app.get('/api/company/:companyId/accounts', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM accounts WHERE company_id = ? AND is_active = 1 ORDER BY code ASC',
+        [req.companyId]
+    );
+    res.json(rows);
+}));
+
+// 2. GET Journal Entries (History)
+app.get('/api/company/:companyId/ledger/entries', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT je.*, 
+               (SELECT SUM(debit) FROM general_ledger WHERE journal_entry_id = je.id) as total_amount
+        FROM journal_entries je 
+        WHERE je.company_id = ? 
+        ORDER BY je.date DESC, je.created_at DESC`, 
+        [req.companyId]
+    );
+    res.json(rows);
+}));
+
+// 3. POST New Accounting Entry (The "Double Entry" Engine)
+app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), validateCompany, asyncHandler(async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const { 
+            date, 
+            description, 
+            entryType, 
+            account_id, 
+            debit, 
+            credit,
+            offset_account_id // The account that balances the entry (e.g., Cash or Bank)
+        } = req.body;
+
+        // A. Insert Journal Header
+        const [jeResult] = await conn.query('INSERT INTO journal_entries SET ?', {
+            company_id: req.companyId,
+            date,
+            description,
+            entry_type: entryType,
+            reference_no: req.body.reference_no || null
+        });
+        const journalId = jeResult.insertId;
+
+        // B. Insert Ledger Line 1 (The Primary Account from Form)
+        await conn.query('INSERT INTO general_ledger SET ?', {
+            journal_entry_id: journalId,
+            account_id: account_id,
+            debit: debit || 0,
+            credit: credit || 0
+        });
+
+        // C. Insert Ledger Line 2 (The Balancing Account)
+        // Logic: If user debited Account A, we must credit Account B
+        await conn.query('INSERT INTO general_ledger SET ?', {
+            journal_entry_id: journalId,
+            account_id: offset_account_id,
+            debit: credit || 0, // Swap debit/credit to balance
+            credit: debit || 0
+        });
+
+        // D. Handle Receipt Upload
+        if (req.file) {
+            await conn.query('INSERT INTO supporting_documents SET ?', {
+                journal_entry_id: journalId,
+                file_name: req.file.originalname,
+                file_path: normalizePath(req.file.path),
+                file_type: req.file.mimetype
+            });
+        }
+
+        await conn.commit();
+        res.status(201).json({ success: true, journalId });
+
+    } catch (err) {
+        await conn.rollback();
+        throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+// 4. GET Financial Trial Balance
+app.get('/api/company/:companyId/ledger/trial-balance', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT a.name, a.code, a.category,
+               SUM(gl.debit) as total_debit,
+               SUM(gl.credit) as total_credit,
+               (SUM(gl.debit) - SUM(gl.credit)) as net_balance
+        FROM accounts a
+        LEFT JOIN general_ledger gl ON a.id = gl.account_id
+        WHERE a.company_id = ?
+        GROUP BY a.id`, 
+        [req.companyId]
+    );
+    res.json(rows);
 }));
 app.use((req, res) => { res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found` }); });
 

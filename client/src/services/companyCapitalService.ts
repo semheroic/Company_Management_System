@@ -1,4 +1,6 @@
 
+import axios from "axios";
+
 export interface CompanyCapital {
   id: string;
   company_id: string;
@@ -44,6 +46,9 @@ export interface ShareholderRecord {
   contact_info?: string;
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const API_URL = `${API_BASE}/api`;
+
 class CompanyCapitalService {
   private static companyCapital: CompanyCapital[] = [];
   private static capitalContributions: CapitalContribution[] = [];
@@ -72,6 +77,65 @@ class CompanyCapitalService {
   static getCompanyCapital(companyId?: string): CompanyCapital | null {
     const targetCompanyId = companyId || this.getCurrentCompanyId();
     return this.companyCapital.find(cap => cap.company_id === targetCompanyId) || null;
+  }
+
+  static async getCompanyCapitalFromApi(companyId?: string): Promise<CompanyCapital | null> {
+    const targetCompanyId = companyId || this.getCurrentCompanyId();
+    if (!targetCompanyId || targetCompanyId === 'comp-001') return null;
+
+    const summaryResponse = await axios.get(`${API_URL}/company/${targetCompanyId}/capital`, {
+      headers: { 'x-company-id': targetCompanyId }
+    });
+
+    const summary = summaryResponse.data;
+    if (!Number(summary?.authorized_shares || 0)) {
+      return null;
+    }
+
+    const structureResponse = await axios.get(`${API_URL}/company/${targetCompanyId}/capital-structure`, {
+      headers: { 'x-company-id': targetCompanyId }
+    });
+
+    const structure = structureResponse.data;
+
+    return {
+      id: String(structure.id || `cap-${targetCompanyId}`),
+      company_id: String(structure.company_id || targetCompanyId),
+      authorized_shares: Number(summary.authorized_shares || structure.authorized_shares || 0),
+      share_price: Number(structure.share_price || 0),
+      total_authorized_capital: Number(summary.authorized_shares || structure.authorized_shares || 0) * Number(structure.share_price || 0),
+      issued_shares: Number(summary.issued_shares || 0),
+      paid_up_capital: Number(summary.paid_up_capital || 0),
+      currency: structure.currency || "RWF",
+      capital_type: structure.capital_type || "ordinary",
+      created_at: structure.created_at || "",
+      updated_at: structure.updated_at || ""
+    };
+  }
+
+  static async getAllShareholdersFromApi(companyId?: string): Promise<ShareholderRecord[]> {
+    const targetCompanyId = companyId || this.getCurrentCompanyId();
+    if (!targetCompanyId || targetCompanyId === 'comp-001') return [];
+
+    const response = await axios.get(`${API_URL}/company/${targetCompanyId}/shareholders`, {
+      headers: { 'x-company-id': targetCompanyId }
+    });
+
+    return (response.data || []).map((shareholder: any) => ({
+      id: String(shareholder.id),
+      company_id: String(targetCompanyId),
+      name: shareholder.name || shareholder.full_name || "",
+      national_id: shareholder.national_id || "",
+      shares_held: Number(shareholder.shares_held ?? shareholder.shares_count ?? 0),
+      share_percentage: Number(shareholder.share_percentage ?? shareholder.ownership_percent ?? 0),
+      entry_date: shareholder.entry_date || "",
+      is_active: shareholder.is_active !== false,
+      is_director: Boolean(shareholder.is_director),
+      is_beneficial_owner: Boolean(shareholder.is_beneficial_owner),
+      linked_beneficial_owner_id: shareholder.linked_beneficial_owner_id || undefined,
+      nationality: shareholder.nationality || "Rwandan",
+      contact_info: shareholder.contact_info || undefined
+    }));
   }
 
   static addCapitalContribution(data: Omit<CapitalContribution, 'id' | 'created_at' | 'company_id'> & { company_id?: string }): CapitalContribution {

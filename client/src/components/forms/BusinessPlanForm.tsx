@@ -60,10 +60,15 @@ export function BusinessPlanForm({ businessPlan, onSubmit, onCancel }: BusinessP
   const handleSubmit = async (data: BusinessPlanFormData) => {
     setIsSubmitting(true);
     try {
+      const companyId = BusinessPlanService.getCurrentCompanyId();
+      if (!companyId) {
+        throw new Error("No company selected");
+      }
+
       let result: BusinessPlan;
       
       if (businessPlan) {
-        result = BusinessPlanService.updateBusinessPlan(businessPlan.id, {
+        result = await BusinessPlanService.updateBusinessPlan(companyId, businessPlan.id, {
           title: data.title,
           year: data.year,
           description: data.description,
@@ -76,13 +81,13 @@ export function BusinessPlanForm({ businessPlan, onSubmit, onCancel }: BusinessP
           competitive_analysis: data.competitive_analysis,
           status: data.status,
           uploaded_by: businessPlan.uploaded_by,
-        })!;
+        });
         toast({
           title: "Success",
           description: "Business plan updated successfully",
         });
       } else {
-        result = BusinessPlanService.createBusinessPlan({
+        result = await BusinessPlanService.createBusinessPlan(companyId, {
           title: data.title,
           year: data.year,
           description: data.description,

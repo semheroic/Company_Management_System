@@ -14,8 +14,6 @@ import {
   FileText, 
   Calendar,
   TrendingUp,
-  Building2,
-  Users,
   BarChart3,
   Search
 } from "lucide-react";
@@ -32,19 +30,47 @@ export default function BusinessPlanPage() {
   const [editingPlan, setEditingPlan] = useState<BusinessPlan | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [yearFilter, setYearFilter] = useState<number | null>(null);
+  const [yearsSummary, setYearsSummary] = useState<Array<{ year: number; planCount: number; hasActive: boolean }>>([]);
+  const companyId = BusinessPlanService.getCurrentCompanyId();
 
   useEffect(() => {
-    loadBusinessPlans();
-  }, []);
+    if (companyId) {
+      loadBusinessPlans();
+    }
+  }, [companyId]);
 
-  const loadBusinessPlans = () => {
-    const plans = BusinessPlanService.getAllBusinessPlans();
-    setBusinessPlans(plans);
-    
-    // Set the active plan as selected by default
-    const activePlan = BusinessPlanService.getActiveBusinessPlan();
-    if (activePlan && !selectedPlan) {
-      setSelectedPlan(activePlan);
+  const loadBusinessPlans = async () => {
+    if (!companyId) {
+      setBusinessPlans([]);
+      setSelectedPlan(null);
+      setYearsSummary([]);
+      return;
+    }
+
+    try {
+      const [plans, activePlan, summary] = await Promise.all([
+        BusinessPlanService.getAllBusinessPlans(companyId),
+        BusinessPlanService.getActiveBusinessPlan(companyId),
+        BusinessPlanService.getYearsSummary(companyId)
+      ]);
+
+      setBusinessPlans(plans);
+      setYearsSummary(summary);
+      setSelectedPlan((current) => {
+        if (current) {
+          return plans.find((plan) => plan.id === current.id) || activePlan || plans[0] || null;
+        }
+        return activePlan || plans[0] || null;
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to load business plans",
+        variant: "destructive",
+      });
+      setBusinessPlans([]);
+      setSelectedPlan(null);
+      setYearsSummary([]);
     }
   };
 
@@ -58,25 +84,29 @@ export default function BusinessPlanPage() {
     setShowForm(true);
   };
 
-  const handleFormSubmit = (plan: BusinessPlan) => {
-    loadBusinessPlans();
+  const handleFormSubmit = async (plan: BusinessPlan) => {
+    await loadBusinessPlans();
     setShowForm(false);
     setEditingPlan(null);
     setSelectedPlan(plan);
   };
 
-  const handleSetActive = (plan: BusinessPlan) => {
-    BusinessPlanService.setActiveBusinessPlan(plan.id);
-    loadBusinessPlans();
+  const handleSetActive = async (plan: BusinessPlan) => {
+    if (!companyId) return;
+
+    await BusinessPlanService.setActiveBusinessPlan(companyId, plan.id);
+    await loadBusinessPlans();
     toast({
       title: "Success",
       description: `"${plan.title}" is now the active business plan`,
     });
   };
 
-  const handleArchivePlan = (plan: BusinessPlan) => {
-    BusinessPlanService.archiveBusinessPlan(plan.id);
-    loadBusinessPlans();
+  const handleArchivePlan = async (plan: BusinessPlan) => {
+    if (!companyId) return;
+
+    await BusinessPlanService.archiveBusinessPlan(companyId, plan.id);
+    await loadBusinessPlans();
     if (selectedPlan?.id === plan.id) {
       setSelectedPlan(null);
     }
@@ -94,7 +124,18 @@ export default function BusinessPlanPage() {
   });
 
   const years = [...new Set(businessPlans.map(p => p.year))].sort((a, b) => b - a);
-  const yearsSummary = BusinessPlanService.getYearsSummary();
+
+  if (!companyId) {
+    return (
+      <div className="container mx-auto py-8">
+        <Card>
+          <CardContent className="pt-6 text-center text-gray-600">
+            Select a company before managing business plans.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (showForm) {
     return (
@@ -157,7 +198,7 @@ export default function BusinessPlanPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {BusinessPlanService.getActiveBusinessPlan()?.year || "None"}
+                  {businessPlans.find((plan) => plan.status === "active")?.year || "None"}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Current strategic plan

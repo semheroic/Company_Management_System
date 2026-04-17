@@ -7,9 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Building, DollarSign, AlertTriangle, Loader2 } from "lucide-react";
-import CompanyCapitalService, { CompanyCapital } from "@/services/companyCapitalService";
+import { CompanyCapital } from "@/services/companyCapitalService";
 import axios from "axios";
-import { useParams } from "react-router-dom";
 
 interface CompanyCapitalFormProps {
   open: boolean;
@@ -20,7 +19,6 @@ interface CompanyCapitalFormProps {
 
 export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: CompanyCapitalFormProps) {
   const { toast } = useToast();
-  const { companyId } = useParams();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -90,42 +88,37 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
     setIsSubmitting(true);
 
     try {
+      const companyId = localStorage.getItem('selectedCompanyId');
+      if (!companyId) {
+        throw new Error("No company selected");
+      }
+
       // 1. Prepare payload for the database (Table 6)
       const capitalData = {
-        company_id: companyId || localStorage.getItem('selectedCompanyId'),
         authorized_shares: shares,
         share_price: price,
         currency: formData.currency,
-        capital_type: formData.capital_type as 'ordinary' | 'preference' | 'mixed',
-        total_value: shares * price
+        capital_type: formData.capital_type as 'ordinary' | 'preference' | 'mixed'
       };
 
-      // 2. Determine if we are creating or updating
-     // Define the base URL (using 5000 as requested)
-const BASE_URL = "http://localhost:5000";
-// Construct the full endpoint
-const endpoint = `${BASE_URL}/api/company/${capitalData.company_id}/capital-structure`;
-      const response = editData 
-        ? await axios.put(endpoint, capitalData)
-        : await axios.post(endpoint, capitalData);
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+      const endpoint = `${baseUrl}/api/company/${companyId}/capital-structure`;
+      await axios.post(endpoint, capitalData, {
+        headers: { "x-company-id": companyId }
+      });
 
-      if (response.data.success) {
-        // 3. Keep the existing local service call for state sync if needed
-        CompanyCapitalService.initializeCompanyCapital(capitalData as any);
-        
-        toast({
-          title: "Success",
-          description: editData ? "Capital structure updated" : "Company capital structure initialized successfully"
-        });
+      toast({
+        title: "Success",
+        description: editData ? "Capital structure updated" : "Company capital structure initialized successfully"
+      });
 
-        onSuccess();
-        onClose();
-      }
+      onSuccess();
+      onClose();
     } catch (error: any) {
       console.error("Backend error:", error);
       toast({
         title: "System Error",
-        description: error.response?.data?.message || "Failed to communicate with capital management service",
+        description: error.response?.data?.error || error.message || "Failed to communicate with capital management service",
         variant: "destructive"
       });
     } finally {

@@ -1,92 +1,89 @@
 import { useState } from "react";
+import axios from "axios";
+import { useParams } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, UserCheck } from "lucide-react"; // Added icons
-import axios from "axios";
-import { useParams } from "react-router-dom";
+import { Loader2, UserCheck } from "lucide-react";
 
 interface BeneficialOwnerFormProps {
   open: boolean;
   onClose: () => void;
-  onAdd: (record: any) => void;
+  onAdd: () => void; 
 }
 
 export function BeneficialOwnerForm({ open, onClose, onAdd }: BeneficialOwnerFormProps) {
   const { toast } = useToast();
-  const { companyId } = useParams();
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { id: routeId } = useParams<{ id: string }>();
+  
+  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "9";
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // State keys updated to match your SPECIFIC database columns
   const [formData, setFormData] = useState({
-    name: "",
-    nationalId: "",
-    ownership: "",
+    full_name: "",
     nationality: "",
-    address: ""
+    id_number: "", // Changed from national_id to match your DB
+    relationship_to_company: "direct_owner", // Added because DB says NO NULL
+    ownership_percentage: "",
+    physical_address: ""
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Basic validation
-    if (!formData.name || !formData.nationalId || !formData.ownership) {
-      toast({
-        title: "Required Fields",
-        description: "Please ensure Name, ID, and Ownership % are provided.",
-        variant: "destructive"
-      });
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
-      const BASE_URL = "http://localhost:5000";
-      // Use companyId from URL params or fallback to local storage
-      const activeCompanyId = companyId || localStorage.getItem('selectedCompanyId');
-      
+      // Map exactly to your DB field list
       const payload = {
-        company_id: activeCompanyId,
-        full_name: formData.name,
-        national_id: formData.nationalId,
-        ownership_percentage: parseFloat(formData.ownership),
+        full_name: formData.full_name,
         nationality: formData.nationality,
-        physical_address: formData.address
+        id_number: formData.id_number,
+        relationship_to_company: formData.relationship_to_company,
+        ownership_percentage: parseFloat(formData.ownership_percentage) || 0,
+        physical_address: formData.physical_address,
+        company_id: parseInt(companyId)
       };
 
-      // API Call to Table 8 Backend
       const response = await axios.post(
-        `${BASE_URL}/api/company/${activeCompanyId}/beneficial-owners`, 
-        payload
+        `http://localhost:5000/api/company/${companyId}/beneficial-owners`,
+        payload,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-company-id": companyId,
+          },
+        }
       );
 
-      if (response.data.success) {
-        // Pass the new record (including the DB-generated ID) back to the parent UI
-        const newRecord = {
-          ...payload,
-          id: response.data.ownerId || Date.now(),
-        };
-        
-        onAdd(newRecord);
-        
+      if (response.status === 201 || response.status === 200) {
         toast({
           title: "Success",
-          description: "Beneficial owner successfully registered in the system."
+          description: "Beneficial owner registered successfully."
         });
         
-        // Reset and close
-        setFormData({ name: "", nationalId: "", ownership: "", nationality: "", address: "" });
+        // Reset form
+        setFormData({ 
+          full_name: "", 
+          nationality: "", 
+          id_number: "", 
+          relationship_to_company: "direct_owner",
+          ownership_percentage: "", 
+          physical_address: "" 
+        });
+        onAdd(); 
         onClose();
       }
     } catch (error: any) {
-      console.error("Error adding owner:", error);
+      console.error("Submission Error:", error);
       toast({
-        title: "Submission Failed",
-        description: error.response?.data?.message || "Could not connect to the server at localhost:5000",
-        variant: "destructive"
+        title: "Database Error",
+        description: error.response?.data?.error || "Unknown column error. Check backend console.",
+        variant: "destructive",
       });
     } finally {
       setIsSubmitting(false);
@@ -105,24 +102,22 @@ export function BeneficialOwnerForm({ open, onClose, onAdd }: BeneficialOwnerFor
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Full Name *</Label>
+            <Label htmlFor="full_name">Full Name *</Label>
             <Input
-              id="name"
-              placeholder="e.g. Jean Pierre"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              id="full_name"
+              value={formData.full_name}
+              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
               required
               disabled={isSubmitting}
             />
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="nationalId">National ID/Passport *</Label>
+            <Label htmlFor="id_number">National ID/Passport (id_number) *</Label>
             <Input
-              id="nationalId"
-              placeholder="ID Number"
-              value={formData.nationalId}
-              onChange={(e) => setFormData({ ...formData, nationalId: e.target.value })}
+              id="id_number"
+              value={formData.id_number}
+              onChange={(e) => setFormData({ ...formData, id_number: e.target.value })}
               required
               disabled={isSubmitting}
             />
@@ -130,71 +125,64 @@ export function BeneficialOwnerForm({ open, onClose, onAdd }: BeneficialOwnerFor
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="ownership">Ownership % *</Label>
+              <Label htmlFor="ownership_percentage">Ownership %</Label>
               <Input
-                id="ownership"
+                id="ownership_percentage"
                 type="number"
-                min="0"
-                max="100"
                 step="0.01"
-                placeholder="25"
-                value={formData.ownership}
-                onChange={(e) => setFormData({ ...formData, ownership: e.target.value })}
-                required
+                value={formData.ownership_percentage}
+                onChange={(e) => setFormData({ ...formData, ownership_percentage: e.target.value })}
                 disabled={isSubmitting}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="nationality">Nationality *</Label>
-              <Select 
-                value={formData.nationality} 
-                onValueChange={(value) => setFormData({ ...formData, nationality: value })}
+              <Input
+                id="nationality"
+                placeholder="e.g. Rwandan"
+                value={formData.nationality}
+                onChange={(e) => setFormData({ ...formData, nationality: e.target.value })}
+                required
                 disabled={isSubmitting}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="rwandan">🇷🇼 Rwandan</SelectItem>
-                  <SelectItem value="kenyan">🇰🇪 Kenyan</SelectItem>
-                  <SelectItem value="ugandan">🇺🇬 Ugandan</SelectItem>
-                  <SelectItem value="tanzanian">🇹🇿 Tanzanian</SelectItem>
-                  <SelectItem value="other">🌍 Other</SelectItem>
-                </SelectContent>
-              </Select>
+              />
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="address">Physical Address *</Label>
+            <Label htmlFor="relationship">Relationship Type *</Label>
+            <Select 
+              value={formData.relationship_to_company} 
+              onValueChange={(value) => setFormData({ ...formData, relationship_to_company: value })}
+              disabled={isSubmitting}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="direct_owner">Direct Owner</SelectItem>
+                <SelectItem value="indirect_owner">Indirect Owner</SelectItem>
+                <SelectItem value="ultimate_controller">Ultimate Controller</SelectItem>
+                <SelectItem value="nominee_beneficiary">Nominee</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="physical_address">Physical Address</Label>
             <Input
-              id="address"
-              placeholder="District, Sector, Cell"
-              value={formData.address}
-              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              required
+              id="physical_address"
+              value={formData.physical_address}
+              onChange={(e) => setFormData({ ...formData, physical_address: e.target.value })}
               disabled={isSubmitting}
             />
           </div>
 
           <div className="flex justify-end gap-2 pt-4 border-t">
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={onClose} 
-              disabled={isSubmitting}
-            >
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                "Add Owner"
-              )}
+              {isSubmitting ? <Loader2 className="animate-spin" /> : "Add Owner"}
             </Button>
           </div>
         </form>

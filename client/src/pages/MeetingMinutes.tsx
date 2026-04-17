@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useState, useEffect } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -25,10 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function MeetingMinutes() {
   const { toast } = useToast();
-  const { companyId } = useParams<{ companyId: string }>(); 
-  
-  // Parse companyId as number for service calls
-  const numericCompanyId = parseInt(companyId || "1", 10);
+  const numericCompanyId = Number(localStorage.getItem("selectedCompanyId") || 0);
 
   const [meetings, setMeetings] = useState<MeetingMinutes[]>([]);
   const [filteredMeetings, setFilteredMeetings] = useState<MeetingMinutes[]>([]);

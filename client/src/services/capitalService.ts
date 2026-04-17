@@ -1,4 +1,6 @@
 
+import axios from "axios";
+
 export interface CapitalEntry {
   id: string;
   company_id: string;
@@ -28,6 +30,9 @@ export interface CapitalSummary {
   }>;
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const API_URL = `${API_BASE}/api`;
+
 class CapitalService {
   private static capitalEntries: CapitalEntry[] = [];
   private static entryCounter = 1;
@@ -50,6 +55,54 @@ class CapitalService {
 
   private static getCurrentCompanyId(): string {
     return localStorage.getItem('selectedCompanyId') || 'comp-001';
+  }
+
+  static async getCapitalEntriesFromApi(companyId?: string): Promise<CapitalEntry[]> {
+    const targetCompanyId = companyId || this.getCurrentCompanyId();
+    if (!targetCompanyId || targetCompanyId === 'comp-001') return [];
+
+    const response = await axios.get(`${API_URL}/company/${targetCompanyId}/capital-entries`, {
+      headers: { 'x-company-id': targetCompanyId }
+    });
+
+    return (response.data || []).map((entry: any) => ({
+      id: String(entry.id),
+      company_id: String(entry.company_id),
+      shareholder_id: String(entry.shareholder_id),
+      shareholder_name: entry.shareholder_name || "",
+      amount: Number(entry.amount || 0),
+      date_contributed: entry.date_contributed ? String(entry.date_contributed).split("T")[0] : "",
+      method: entry.method,
+      description: entry.description || "",
+      file_url: entry.file_url || undefined,
+      type: entry.entry_type,
+      status: entry.status,
+      created_at: entry.created_at || "",
+      created_by: entry.created_by || "System"
+    }));
+  }
+
+  static async getCapitalSummaryFromApi(companyId?: string): Promise<CapitalSummary> {
+    const targetCompanyId = companyId || this.getCurrentCompanyId();
+    if (!targetCompanyId || targetCompanyId === 'comp-001') {
+      return {
+        total_capital: 0,
+        total_contributions: 0,
+        total_withdrawals: 0,
+        shareholder_breakdown: []
+      };
+    }
+
+    const response = await axios.get(`${API_URL}/company/${targetCompanyId}/capital/summary`, {
+      headers: { 'x-company-id': targetCompanyId }
+    });
+
+    return {
+      total_capital: Number(response.data?.total_capital || 0),
+      total_contributions: Number(response.data?.total_contributions || 0),
+      total_withdrawals: Number(response.data?.total_withdrawals || 0),
+      shareholder_breakdown: []
+    };
   }
 
   static getAllCapitalEntries(): CapitalEntry[] {
@@ -150,9 +203,9 @@ class CapitalService {
     };
   }
 
-  static exportToCSV(): string {
+  static exportToCSV(entries?: CapitalEntry[]): string {
     const currentCompanyId = this.getCurrentCompanyId();
-    const companyEntries = this.capitalEntries.filter(entry => entry.company_id === currentCompanyId);
+    const companyEntries = entries || this.capitalEntries.filter(entry => entry.company_id === currentCompanyId);
     
     const headers = ['Date', 'Shareholder', 'Type', 'Amount', 'Method', 'Description', 'Status'];
     const rows = companyEntries.map(entry => [
