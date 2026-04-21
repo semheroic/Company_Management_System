@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useState, useEffect, useCallback } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { DirectorShareholderForm } from "@/components/forms/DirectorShareholderForm";
 import { ShareTransferForm } from "@/components/forms/ShareTransferForm";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -30,8 +30,7 @@ axios.defaults.baseURL = 'http://localhost:5000';
 
 export default function DirectorsShareholders() {
   const { toast } = useToast();
-  // Ensure we have a company ID (using "9" as fallback per your errors)
-  const companyId = localStorage.getItem('selectedCompanyId') || "9"; 
+  const [companyId, setCompanyId] = useState<string | null>(null);
   
   const [showForm, setShowForm] = useState(false);
   const [showTransferForm, setShowTransferForm] = useState(false);
@@ -40,11 +39,50 @@ export default function DirectorsShareholders() {
   const [isLoading, setIsLoading] = useState(true);
   const [directors, setDirectors] = useState<DirectorShareholder[]>([]);
 
-  // 1. FETCH MEMBERS FROM DATABASE
-  const fetchMembers = useCallback(async () => {
-    setIsLoading(true);
+  const resolveCompanyId = useCallback(async () => {
+    const storedId = localStorage.getItem("selectedCompanyId");
+
     try {
-      const response = await axios.get(`/api/company/${companyId}/members`);
+      const response = await axios.get("/api/companies");
+      const companies = Array.isArray(response.data) ? response.data : [];
+
+      if (companies.length === 0) {
+        setCompanyId(null);
+        return null;
+      }
+
+      const storedCompany = storedId
+        ? companies.find((company: any) => String(company.id) === storedId)
+        : null;
+
+      const fallbackCompany = companies.find((company: any) => company.status === "active") || companies[0];
+      const resolvedId = String((storedCompany || fallbackCompany).id);
+
+      localStorage.setItem("selectedCompanyId", resolvedId);
+      setCompanyId(resolvedId);
+      return resolvedId;
+    } catch (error) {
+      console.error("Failed to resolve company ID:", error);
+      setCompanyId(storedId);
+      return storedId;
+    }
+  }, []);
+
+  // 1. FETCH MEMBERS FROM DATABASE
+  const fetchMembers = useCallback(async (targetCompanyId?: string | null) => {
+    setIsLoading(true);
+    const resolvedCompanyId = targetCompanyId || companyId;
+
+    if (!resolvedCompanyId) {
+      setDirectors([]);
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await axios.get(`/api/company/${resolvedCompanyId}/members`, {
+        headers: { "x-company-id": resolvedCompanyId }
+      });
       // Map database snake_case to your existing frontend camelCase
       const mappedData = response.data.map((m: any) => ({
         id: m.id,
@@ -58,10 +96,10 @@ export default function DirectorsShareholders() {
         document_path: m.document_path
       }));
       setDirectors(mappedData);
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Fetch Failed",
-        description: "Could not load members from database.",
+        description: error.response?.data?.error || "Could not load members from database.",
         variant: "destructive"
       });
     } finally {
@@ -70,8 +108,13 @@ export default function DirectorsShareholders() {
   }, [companyId, toast]);
 
   useEffect(() => {
-    fetchMembers();
-  }, [fetchMembers]);
+    const initializePage = async () => {
+      const resolvedCompanyId = await resolveCompanyId();
+      await fetchMembers(resolvedCompanyId);
+    };
+
+    void initializePage();
+  }, [fetchMembers, resolveCompanyId]);
 
   // 2. ADD / UPDATE HANDLER (Called by Form)
   const handleFormSubmit = async () => {
@@ -83,9 +126,16 @@ export default function DirectorsShareholders() {
 
   // 3. DELETE MEMBER FROM DATABASE
   const handleDeletePerson = async (id: number) => {
+    if (!companyId) {
+      toast({ title: "No Company Selected", description: "Select or create a company first.", variant: "destructive" });
+      return;
+    }
+
     if (window.confirm("Are you sure you want to delete this person? This will be permanent in the database.")) {
       try {
-        await axios.delete(`/api/company/${companyId}/members/${id}`);
+        await axios.delete(`/api/company/${companyId}/members/${id}`, {
+          headers: { "x-company-id": companyId }
+        });
         toast({ title: "Success", description: "Member removed from database." });
         fetchMembers(); // Refresh table
       } catch (error) {
@@ -100,13 +150,18 @@ export default function DirectorsShareholders() {
   };
 
   // Remaining Logic (Sync, Transfers, UI Calculations) kept exactly as provided
-  const handleShareTransferSuccess = async () => {
+const handleShareTransferSuccess = async () => {
   await fetchMembers(); // Refresh the table data
   setShowTransferForm(false); // Close the modal
   toast({ title: "Success", description: "Shares transferred in database." });
 };
 
   const handleManualSync = async () => {
+    if (!companyId) {
+      toast({ title: "No Company Selected", description: "Select or create a company first.", variant: "destructive" });
+      return;
+    }
+
     setIsSyncing(true);
     await fetchMembers();
     setIsSyncing(false);
@@ -148,7 +203,7 @@ export default function DirectorsShareholders() {
             </Link>
             <h1 className="text-2xl font-semibold">Directors & Shareholders</h1>
             <div className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
-              Live Database Connected
+              {companyId ? `Company ID ${companyId}` : "No Company Selected"}
             </div>
           </div>
           <div className="flex gap-2">
@@ -162,16 +217,25 @@ export default function DirectorsShareholders() {
               title="Directors & Shareholders Register"
               columns={exportColumns}
             />
-            <Button variant="outline" onClick={() => setShowTransferForm(true)} disabled={directors.length < 2}>
+            <Button variant="outline" onClick={() => setShowTransferForm(true)} disabled={!companyId || directors.length < 2}>
               <ArrowRightLeft className="w-4 h-4 mr-2" />
               Transfer Shares
             </Button>
-            <Button onClick={() => setShowForm(true)}>
+            <Button onClick={() => setShowForm(true)} disabled={!companyId}>
               <Plus className="w-4 h-4 mr-2" />
               Add New Person
             </Button>
           </div>
         </div>
+
+        {!companyId && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              No active company is selected. Create or select a company before managing directors and shareholders.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Share Allocation Alert */}
         {isOverAllocated && (
@@ -315,6 +379,7 @@ export default function DirectorsShareholders() {
           open={showForm} 
           onClose={handleFormClose}
           onAdd={handleFormSubmit} // Now handles both add and update refresh
+          companyId={companyId}
           editData={editingPerson}
           currentDirectors={directors}
           authorizedShares={AUTHORIZED_SHARES}

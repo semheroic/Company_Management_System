@@ -1,254 +1,285 @@
-
-import { useState } from "react";
-import { ArrowLeft, Plus, Users, Shield, Edit, Trash2, Eye } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useCallback } from "react";
+import axios from "axios";
+import { 
+  ArrowLeft, Plus, Users, Shield, Edit, Trash2, 
+  Building2, Key, Loader2, Save, Info, CheckCircle2 
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Link } from "react-router-dom";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "react-router-dom";
+
+const API_BASE = "http://localhost:5000/api";
+const api = axios.create({ baseURL: API_BASE });
 
 export default function UserManagement() {
   const { toast } = useToast();
-  const [users] = useState([
-    {
-      id: 1,
-      name: "John Admin",
-      email: "admin@company.com",
-      role: "Administrator",
-      department: "IT",
-      status: "Active",
-      lastLogin: "2024-07-12 14:30",
-      permissions: ["Full Access"]
-    },
-    {
-      id: 2,
-      name: "Jane Accountant",
-      email: "jane@company.com",
-      role: "Accountant",
-      department: "Finance",
-      status: "Active",
-      lastLogin: "2024-07-12 09:15",
-      permissions: ["Finance", "Reports"]
-    },
-    {
-      id: 3,
-      name: "Bob HR",
-      email: "bob@company.com",
-      role: "HR Officer",
-      department: "Human Resources",
-      status: "Active",
-      lastLogin: "2024-07-11 16:45",
-      permissions: ["HR", "Employees"]
-    },
-    {
-      id: 4,
-      name: "Alice Compliance",
-      email: "alice@company.com",
-      role: "Compliance Officer",
-      department: "Legal",
-      status: "Inactive",
-      lastLogin: "2024-07-08 11:20",
-      permissions: ["Compliance", "Documents"]
-    },
-    {
-      id: 5,
-      name: "Mike Viewer",
-      email: "mike@company.com",
-      role: "Viewer",
-      department: "Operations",
-      status: "Active",
-      lastLogin: "2024-07-12 08:00",
-      permissions: ["Read Only"]
+  
+  // States for Database Data
+  const [users, setUsers] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [permissions, setPermissions] = useState<any[]>([]);
+  
+  // UI States
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("users");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Form State
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    password: "",
+    role_id: "",
+    department_id: "",
+    status: "Active",
+    selectedPermissionIds: [] as number[]
+  });
+
+  // --- Data Sync ---
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [u, r, d, p] = await Promise.all([
+        api.get("/users"),
+        api.get("/roles"),
+        api.get("/departments"),
+        api.get("/permissions")
+      ]);
+      setUsers(u.data);
+      setRoles(r.data);
+      setDepartments(d.data);
+      setPermissions(p.data);
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "API Error",
+        description: "Could not fetch data from localhost:5000. Is the server running?"
+      });
+    } finally {
+      setLoading(false);
     }
-  ]);
+  }, [toast]);
 
-  const getRoleColor = (role: string) => {
-    switch (role.toLowerCase()) {
-      case "administrator": return "bg-purple-100 text-purple-800";
-      case "accountant": return "bg-green-100 text-green-800";
-      case "hr officer": return "bg-blue-100 text-blue-800";
-      case "compliance officer": return "bg-orange-100 text-orange-800";
-      case "viewer": return "bg-gray-100 text-gray-800";
-      default: return "bg-gray-100 text-gray-800";
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // --- Actions ---
+  const handleOpenModal = (item?: any) => {
+    if (item) {
+      setEditingId(item.id);
+      setFormData({
+        name: item.name || "",
+        email: item.email || "",
+        password: "", // Security: don't pre-fill password
+        role_id: item.role_id?.toString() || "",
+        department_id: item.department_id?.toString() || "",
+        status: item.status || "Active",
+        selectedPermissionIds: item.permissions?.map((pName: string) => 
+          permissions.find(p => p.name === pName)?.id
+        ).filter(Boolean) || []
+      });
+    } else {
+      setEditingId(null);
+      setFormData({ name: "", email: "", password: "", role_id: "", department_id: "", status: "Active", selectedPermissionIds: [] });
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const endpoint = `/${activeTab}`;
+      let payload: any = { name: formData.name };
+
+      if (activeTab === "users") {
+        payload = {
+          ...payload,
+          email: formData.email,
+          status: formData.status,
+          role_id: formData.role_id ? parseInt(formData.role_id) : null,
+          department_id: formData.department_id ? parseInt(formData.department_id) : null,
+          permissions: formData.selectedPermissionIds // Array of IDs
+        };
+        if (formData.password) payload.password = formData.password;
+      }
+
+      if (editingId) {
+        await api.put(`${endpoint}/${editingId}`, payload);
+      } else {
+        await api.post(endpoint, payload);
+      }
+
+      toast({ title: "Success", description: `${activeTab} updated.` });
+      setIsModalOpen(false);
+      loadData();
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Save Failed", description: err.response?.data?.message });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case "active": return "bg-green-100 text-green-800";
-      case "inactive": return "bg-red-100 text-red-800";
-      case "suspended": return "bg-yellow-100 text-yellow-800";
-      default: return "bg-gray-100 text-gray-800";
+  const handleDelete = async (id: number) => {
+    if (!confirm("Are you sure?")) return;
+    try {
+      await api.delete(`/${activeTab}/${id}`);
+      toast({ title: "Deleted" });
+      loadData();
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.response?.data?.message });
     }
   };
 
-  const handleAddUser = () => {
-    toast({
-      title: "Add User",
-      description: "User creation form will be implemented"
-    });
-  };
-
-  const handleEditUser = (userId: number) => {
-    toast({
-      title: "Edit User",
-      description: "User edit form will be implemented"
-    });
-  };
-
-  const handleDeleteUser = (userId: number) => {
-    toast({
-      title: "User Deleted",
-      description: "User has been removed from the system"
-    });
-  };
-
-  const handleViewUser = (userId: number) => {
-    toast({
-      title: "User Details",
-      description: "User details view will be implemented"
-    });
-  };
-
-  const activeUsers = users.filter(user => user.status === "Active").length;
-  const inactiveUsers = users.filter(user => user.status === "Inactive").length;
-  const totalUsers = users.length;
+  if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <Link to="/">
-              <Button variant="ghost" size="sm">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Dashboard
-              </Button>
-            </Link>
-            <h1 className="text-2xl font-semibold">User Management</h1>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline">
-              <Shield className="w-4 h-4 mr-2" />
-              Manage Roles
-            </Button>
-            <Button onClick={handleAddUser}>
-              <Plus className="w-4 h-4 mr-2" />
-              Add User
-            </Button>
-          </div>
+    <div className="p-8 max-w-7xl mx-auto space-y-6">
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-bold">Admin Management</h1>
+          <p className="text-muted-foreground">Configure users, departments, and access levels.</p>
         </div>
-
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-2xl font-bold">{totalUsers}</div>
-              <div className="text-sm text-gray-600">Total Users</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-2xl font-bold text-green-600">{activeUsers}</div>
-              <div className="text-sm text-gray-600">Active Users</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-2xl font-bold text-red-600">{inactiveUsers}</div>
-              <div className="text-sm text-gray-600">Inactive Users</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-2xl font-bold">5</div>
-              <div className="text-sm text-gray-600">Roles Defined</div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="w-5 h-5" />
-              System Users
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Login</TableHead>
-                  <TableHead>Permissions</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell>
-                      <div>
-                        <div className="font-medium">{user.name}</div>
-                        <div className="text-sm text-gray-600">{user.email}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getRoleColor(user.role)}>
-                        {user.role}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{user.department}</TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(user.status)}>
-                        {user.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm">{user.lastLogin}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {user.permissions.map((permission, index) => (
-                          <Badge key={index} variant="outline" className="text-xs">
-                            {permission}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleViewUser(user.id)}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleEditUser(user.id)}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleDeleteUser(user.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        <Button onClick={() => handleOpenModal()}>
+          <Plus className="mr-2 h-4 w-4" /> Add {activeTab.slice(0, -1)}
+        </Button>
       </div>
+
+      <Tabs defaultValue="users" onValueChange={setActiveTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="roles">Roles</TabsTrigger>
+          <TabsTrigger value="departments">Departments</TabsTrigger>
+          <TabsTrigger value="permissions">Permissions</TabsTrigger>
+        </TabsList>
+
+        {["users", "roles", "departments", "permissions"].map((tab) => (
+          <TabsContent key={tab} value={tab}>
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{tab === "users" ? "Name" : "Label"}</TableHead>
+                    {tab === "users" && (
+                      <>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Status</TableHead>
+                      </>
+                    )}
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(tab === "users" ? users : tab === "roles" ? roles : tab === "departments" ? departments : permissions).map((item: any) => (
+                    <TableRow key={item.id}>
+                      <TableCell>
+                        <div className="font-medium">{item.name}</div>
+                        {item.email && <div className="text-xs text-muted-foreground">{item.email}</div>}
+                      </TableCell>
+                      {tab === "users" && (
+                        <>
+                          <TableCell>{item.role || "N/A"}</TableCell>
+                          <TableCell><Badge>{item.status}</Badge></TableCell>
+                        </>
+                      )}
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenModal(item)}><Edit className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="text-red-500"><Trash2 className="h-4 w-4" /></Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+        ))}
+      </Tabs>
+
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingId ? "Edit" : "New"} {activeTab}</DialogTitle>
+            <DialogDescription>Modify organizational data here.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSave} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} required />
+            </div>
+
+            {activeTab === "users" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Email</Label>
+                  <Input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Password {editingId && "(Leave blank to keep current)"}</Label>
+                  <Input type="password" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} required={!editingId} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Role</Label>
+                    <Select value={formData.role_id} onValueChange={v => setFormData({...formData, role_id: v})}>
+                      <SelectTrigger><SelectValue placeholder="Select Role" /></SelectTrigger>
+                      <SelectContent>
+                        {roles.map(r => <SelectItem key={r.id} value={r.id.toString()}>{r.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Department</Label>
+                    <Select value={formData.department_id} onValueChange={v => setFormData({...formData, department_id: v})}>
+                      <SelectTrigger><SelectValue placeholder="Select Dept" /></SelectTrigger>
+                      <SelectContent>
+                        {departments.map(d => <SelectItem key={d.id} value={d.id.toString()}>{d.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Assign Permissions</Label>
+                  <div className="grid grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto">
+                    {permissions.map(p => (
+                      <div key={p.id} className="flex items-center space-x-2">
+                        <Checkbox 
+                          id={`p-${p.id}`} 
+                          checked={formData.selectedPermissionIds.includes(p.id)}
+                          onCheckedChange={(checked) => {
+                            const ids = checked 
+                              ? [...formData.selectedPermissionIds, p.id] 
+                              : formData.selectedPermissionIds.filter(id => id !== p.id);
+                            setFormData({...formData, selectedPermissionIds: ids});
+                          }}
+                        />
+                        <Label htmlFor={`p-${p.id}`} className="text-xs">{p.name}</Label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <DialogFooter>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

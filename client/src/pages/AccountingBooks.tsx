@@ -1,19 +1,32 @@
-
-import { ArrowLeft, Plus, Calculator, Upload, Download, Eye, Filter, Zap, TrendingUp } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  ArrowLeft,
+  Calculator,
+  Download,
+  Eye,
+  Filter,
+  Loader2,
+  Plus,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { AccountingEntryForm } from "@/components/forms/AccountingEntryForm";
 import { UniversalTransactionForm } from "@/components/forms/UniversalTransactionForm";
 import IncomeBreakdown from "@/components/reports/IncomeBreakdown";
-import TransactionEngine from "@/services/transactionEngine";
-import AccountingService from "@/services/accountingService";
+import AccountingBooksService, {
+  AccountingBookEntry,
+  AccountingBookSummary,
+} from "@/services/accountingBooksService";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 export default function AccountingBooks() {
   const { toast } = useToast();
@@ -24,63 +37,84 @@ export default function AccountingBooks() {
   const [searchTerm, setSearchTerm] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-
-  // Get real data from transaction engine
-  const [generalLedger, setGeneralLedger] = useState(TransactionEngine.getGeneralLedger());
-  const [financialSummary, setFinancialSummary] = useState(AccountingService.getFinancialSummary());
+  const [isLoading, setIsLoading] = useState(true);
+  const [generalLedger, setGeneralLedger] = useState<AccountingBookEntry[]>([]);
+  const [summary, setSummary] = useState<AccountingBookSummary>({
+    journalCount: 0,
+    lineCount: 0,
+    totalDebits: 0,
+    totalCredits: 0,
+    netBalance: 0,
+  });
 
   useEffect(() => {
-    refreshData();
+    void refreshData();
   }, []);
 
-  const refreshData = () => {
-    setGeneralLedger(TransactionEngine.getGeneralLedger());
-    setFinancialSummary(AccountingService.getFinancialSummary());
+  const refreshData = async () => {
+    setIsLoading(true);
+
+    try {
+      const response = await AccountingBooksService.getAccountingBooks();
+      setGeneralLedger(response.entries || []);
+      setSummary(response.summary);
+    } catch (error: any) {
+      console.error("Failed to load accounting books:", error);
+      toast({
+        title: "Load Failed",
+        description: error.response?.data?.error || "Could not load accounting books from the backend.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // Apply filters
-  const filteredEntries = generalLedger.filter(entry => {
+  const filteredEntries = generalLedger.filter((entry) => {
     const matchesType = filterType === "all" || entry.source_type === filterType;
-    const matchesSearch = searchTerm === "" || 
+    const matchesSearch =
+      searchTerm === "" ||
       entry.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
       entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
       entry.account_name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesDateFrom = !dateFrom || entry.date >= dateFrom;
     const matchesDateTo = !dateTo || entry.date <= dateTo;
-    
+
     return matchesType && matchesSearch && matchesDateFrom && matchesDateTo;
   });
 
-  const handleRefresh = () => {
-    refreshData();
+  const handleRefresh = async () => {
+    await refreshData();
     toast({
       title: "Data Refreshed",
       description: "Accounting data has been updated successfully.",
     });
   };
 
-  const handleExport = (format: 'csv' | 'excel') => {
-    const headers = ['Date', 'Reference', 'Account Code', 'Account Name', 'Description', 'Source Type', 'Debit', 'Credit'];
+  const handleExport = (format: "csv" | "excel") => {
+    const headers = ["Date", "Reference", "Account Code", "Account Name", "Description", "Source Type", "Debit", "Credit"];
     const csvData = [
-      headers.join(','),
-      ...filteredEntries.map(entry => [
-        entry.date,
-        `"${entry.reference}"`,
-        entry.account_code,
-        `"${entry.account_name}"`,
-        `"${entry.description}"`,
-        entry.source_type,
-        entry.debit.toFixed(2),
-        entry.credit.toFixed(2)
-      ].join(','))
-    ].join('\n');
+      headers.join(","),
+      ...filteredEntries.map((entry) =>
+        [
+          entry.date,
+          `"${entry.reference}"`,
+          entry.account_code,
+          `"${entry.account_name}"`,
+          `"${entry.description}"`,
+          entry.source_type,
+          entry.debit.toFixed(2),
+          entry.credit.toFixed(2),
+        ].join(","),
+      ),
+    ].join("\n");
 
-    const blob = new Blob([csvData], { type: 'text/csv' });
+    const blob = new Blob([csvData], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `accounting-books-${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'csv' : 'csv'}`;
-    a.click();
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `accounting-books-${new Date().toISOString().split("T")[0]}.${format === "excel" ? "csv" : "csv"}`;
+    link.click();
     URL.revokeObjectURL(url);
 
     toast({
@@ -89,34 +123,65 @@ export default function AccountingBooks() {
     });
   };
 
-  const handleSuccess = () => {
+  const handleSuccess = async () => {
     setShowUniversalForm(false);
-    handleRefresh();
+    await handleRefresh();
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-RW', {
-      style: 'currency',
-      currency: 'RWF',
-      minimumFractionDigits: 0
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat("en-RW", {
+      style: "currency",
+      currency: "RWF",
+      minimumFractionDigits: 0,
     }).format(amount);
-  };
 
   const getSourceTypeBadgeColor = (sourceType: string) => {
     switch (sourceType) {
-      case "invoice": return "bg-green-100 text-green-800";
-      case "purchase": return "bg-blue-100 text-blue-800";
-      case "payroll": return "bg-purple-100 text-purple-800";
-      case "asset": return "bg-yellow-100 text-yellow-800";
-      case "payment": return "bg-orange-100 text-orange-800";
-      case "manual": return "bg-gray-100 text-gray-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "invoice":
+      case "sale":
+        return "bg-green-100 text-green-800";
+      case "purchase":
+        return "bg-blue-100 text-blue-800";
+      case "payroll":
+      case "salary":
+        return "bg-purple-100 text-purple-800";
+      case "asset":
+      case "asset_acquisition":
+        return "bg-yellow-100 text-yellow-800";
+      case "payment":
+      case "expense":
+        return "bg-orange-100 text-orange-800";
+      case "manual":
+      default:
+        return "bg-gray-100 text-gray-800";
     }
   };
 
-  const totalDebits = filteredEntries.reduce((sum, entry) => sum + entry.debit, 0);
-  const totalCredits = filteredEntries.reduce((sum, entry) => sum + entry.credit, 0);
-  const netBalance = totalDebits - totalCredits;
+  const filteredDebits = filteredEntries.reduce((sum, entry) => sum + entry.debit, 0);
+  const filteredCredits = filteredEntries.reduce((sum, entry) => sum + entry.credit, 0);
+
+  const handleViewEntry = (entry: AccountingBookEntry) => {
+    if (!entry.document_file_path) {
+      toast({
+        title: "No Attachment",
+        description: `Journal ${entry.reference} has no supporting document attached.`,
+      });
+      return;
+    }
+
+    window.open(`${API_BASE}/${entry.document_file_path}`, "_blank", "noopener,noreferrer");
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+          <p className="text-sm text-gray-600">Loading accounting books...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -132,7 +197,7 @@ export default function AccountingBooks() {
             <h1 className="text-2xl font-semibold">Accounting Books</h1>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => handleExport('csv')}>
+            <Button variant="outline" onClick={() => handleExport("csv")}>
               <Download className="w-4 h-4 mr-2" />
               Export CSV
             </Button>
@@ -147,66 +212,68 @@ export default function AccountingBooks() {
           </div>
         </div>
 
-        {/* Info Card */}
         <Card className="mb-6 bg-gradient-to-r from-blue-50 to-green-50 border-blue-200">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <Zap className="w-6 h-6 text-green-600" />
                 <div>
                   <h3 className="font-semibold text-gray-800">Universal Transaction System</h3>
                   <p className="text-sm text-gray-600">
-                    Use Quick Transaction for single-entry bookkeeping. Automatically updates Journal, Ledger, Cash Book, and generates proper double entries.
+                    Use Quick Transaction for single-entry bookkeeping. It now syncs the backend accounting books while preserving the existing local transaction workflows.
                   </p>
                 </div>
               </div>
-              <Button 
-                variant="outline" 
-                onClick={() => setShowIncomeBreakdown(true)}
-                className="flex items-center gap-2"
-              >
-                <TrendingUp className="w-4 h-4" />
-                Income Analysis
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  onClick={() => setShowUniversalForm(true)}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  <Zap className="w-4 h-4 mr-2" />
+                  Open Transaction Entry
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowIncomeBreakdown(true)}
+                  className="flex items-center gap-2"
+                >
+                  <TrendingUp className="w-4 h-4" />
+                  Income Analysis
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Summary Cards */}
         <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-green-600">
-                {formatCurrency(totalDebits)}
-              </div>
+              <div className="text-2xl font-bold text-green-600">{formatCurrency(summary.totalDebits)}</div>
               <div className="text-sm text-gray-600">Total Debits</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-red-600">
-                {formatCurrency(totalCredits)}
-              </div>
+              <div className="text-2xl font-bold text-red-600">{formatCurrency(summary.totalCredits)}</div>
               <div className="text-sm text-gray-600">Total Credits</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className={`text-2xl font-bold ${netBalance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(Math.abs(netBalance))}
+              <div className={`text-2xl font-bold ${summary.netBalance >= 0 ? "text-green-600" : "text-red-600"}`}>
+                {formatCurrency(Math.abs(summary.netBalance))}
               </div>
               <div className="text-sm text-gray-600">Net Balance</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">{filteredEntries.length}</div>
+              <div className="text-2xl font-bold">{summary.lineCount}</div>
               <div className="text-sm text-gray-600">Total Entries</div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Filters and Main Table */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -241,11 +308,13 @@ export default function AccountingBooks() {
                     <SelectItem value="manual">Manual</SelectItem>
                     <SelectItem value="asset">Assets</SelectItem>
                     <SelectItem value="payment">Payments</SelectItem>
+                    <SelectItem value="sale">Sale</SelectItem>
+                    <SelectItem value="expense">Expense</SelectItem>
                   </SelectContent>
                 </Select>
-                <Input 
-                  placeholder="Search entries..." 
-                  className="w-60" 
+                <Input
+                  placeholder="Search entries..."
+                  className="w-60"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -284,19 +353,17 @@ export default function AccountingBooks() {
                         </TableCell>
                         <TableCell className="max-w-xs truncate">{entry.description}</TableCell>
                         <TableCell>
-                          <Badge className={getSourceTypeBadgeColor(entry.source_type)}>
-                            {entry.source_type}
-                          </Badge>
+                          <Badge className={getSourceTypeBadgeColor(entry.source_type)}>{entry.source_type}</Badge>
                         </TableCell>
                         <TableCell className="text-right font-mono">
-                          {entry.debit > 0 ? formatCurrency(entry.debit) : '-'}
+                          {entry.debit > 0 ? formatCurrency(entry.debit) : "-"}
                         </TableCell>
                         <TableCell className="text-right font-mono">
-                          {entry.credit > 0 ? formatCurrency(entry.credit) : '-'}
+                          {entry.credit > 0 ? formatCurrency(entry.credit) : "-"}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="sm" title="View Details">
+                            <Button variant="ghost" size="sm" title="View Details" onClick={() => handleViewEntry(entry)}>
                               <Eye className="w-4 h-4" />
                             </Button>
                           </div>
@@ -306,38 +373,35 @@ export default function AccountingBooks() {
                   ) : (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-8 text-gray-500">
-                        {searchTerm || filterType !== "all" || dateFrom || dateTo 
+                        {searchTerm || filterType !== "all" || dateFrom || dateTo
                           ? "No entries found matching your criteria"
-                          : "No accounting entries found. Use Quick Transaction to add your first entry."}
+                          : "No accounting entries found. Use Quick Transaction or Manual Entry to add your first journal."}
                       </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             </div>
-            
-            {/* Summary Footer */}
+
             {filteredEntries.length > 0 && (
               <div className="mt-4 pt-4 border-t bg-gray-50 rounded-lg p-4">
                 <div className="grid grid-cols-3 gap-4 text-center">
                   <div>
-                    <div className="text-lg font-semibold text-green-600">
-                      {formatCurrency(totalDebits)}
-                    </div>
-                    <div className="text-sm text-gray-600">Total Debits</div>
+                    <div className="text-lg font-semibold text-green-600">{formatCurrency(filteredDebits)}</div>
+                    <div className="text-sm text-gray-600">Filtered Debits</div>
                   </div>
                   <div>
-                    <div className="text-lg font-semibold text-red-600">
-                      {formatCurrency(totalCredits)}
-                    </div>
-                    <div className="text-sm text-gray-600">Total Credits</div>
+                    <div className="text-lg font-semibold text-red-600">{formatCurrency(filteredCredits)}</div>
+                    <div className="text-sm text-gray-600">Filtered Credits</div>
                   </div>
                   <div>
-                    <div className={`text-lg font-semibold ${Math.abs(totalDebits - totalCredits) < 0.01 ? 'text-green-600' : 'text-orange-600'}`}>
-                      {Math.abs(totalDebits - totalCredits) < 0.01 ? 'Balanced' : formatCurrency(Math.abs(totalDebits - totalCredits))}
+                    <div className={`text-lg font-semibold ${Math.abs(filteredDebits - filteredCredits) < 0.01 ? "text-green-600" : "text-orange-600"}`}>
+                      {Math.abs(filteredDebits - filteredCredits) < 0.01
+                        ? "Balanced"
+                        : formatCurrency(Math.abs(filteredDebits - filteredCredits))}
                     </div>
                     <div className="text-sm text-gray-600">
-                      {Math.abs(totalDebits - totalCredits) < 0.01 ? 'Books are balanced' : 'Difference'}
+                      {Math.abs(filteredDebits - filteredCredits) < 0.01 ? "Books are balanced" : "Difference"}
                     </div>
                   </div>
                 </div>
@@ -346,22 +410,20 @@ export default function AccountingBooks() {
           </CardContent>
         </Card>
 
-        {/* Forms and Modals */}
-        <AccountingEntryForm open={showForm} onClose={() => setShowForm(false)} />
-        <UniversalTransactionForm 
-          open={showUniversalForm} 
+        <AccountingEntryForm open={showForm} onClose={() => setShowForm(false)} onSuccess={handleRefresh} />
+        <UniversalTransactionForm
+          open={showUniversalForm}
           onClose={() => setShowUniversalForm(false)}
           onSuccess={handleSuccess}
         />
-        
-        {/* Income Breakdown Modal */}
+
         {showIncomeBreakdown && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-lg max-w-6xl w-full max-h-[90vh] overflow-y-auto">
               <div className="p-4 border-b flex items-center justify-between">
                 <h2 className="text-xl font-semibold">Income Source Analysis</h2>
                 <Button variant="ghost" onClick={() => setShowIncomeBreakdown(false)}>
-                  ×
+                  Close
                 </Button>
               </div>
               <div className="p-4">

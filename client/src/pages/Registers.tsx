@@ -18,19 +18,79 @@ import { ShareCertificatesTab } from "@/components/registers/ShareCertificatesTa
 import { ChargesTab } from "@/components/registers/ChargesTab";
 import { BeneficialOwnersTab } from "@/components/registers/BeneficialOwnersTab";
 
-// Set base URL globally if not already set in main.tsx
-axios.defaults.baseURL = 'http://localhost:5000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+
+interface ShareRecord {
+  id: number;
+  certificateNo: string;
+  holder: string;
+  shares: number;
+  date: string;
+}
+
+interface ChargeRecord {
+  id: number;
+  type: string;
+  amount: string;
+  creditor: string;
+  date: string;
+  status: string;
+}
+
+interface BeneficialOwnerRecord {
+  id: number;
+  name: string;
+  nationalId: string;
+  ownership: number;
+  nationality: string;
+}
+
+const formatDate = (value?: string | null) => {
+  if (!value) return "";
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().split("T")[0];
+};
+
+const mapShareRecord = (record: any): ShareRecord => ({
+  id: Number(record.id),
+  certificateNo: record.certificate_no || record.certificateNo || "",
+  holder: record.holder_name || record.holder || record.full_name || "",
+  shares: Number(record.shares_count ?? record.shares ?? 0),
+  date: formatDate(record.issue_date || record.date),
+});
+
+const mapChargeRecord = (record: any): ChargeRecord => ({
+  id: Number(record.id),
+  type: record.charge_type || record.type || "",
+  amount: record.amount_display || record.amount || "",
+  creditor: record.creditor_name || record.creditor || "",
+  date: formatDate(record.registration_date || record.date),
+  status: record.status || "Unknown",
+});
+
+const mapBeneficialOwnerRecord = (record: any): BeneficialOwnerRecord => ({
+  id: Number(record.id),
+  name: record.full_name || record.name || "",
+  nationalId: record.id_number || record.national_id || record.nationalId || "",
+  ownership: Number(
+    record.ownership_percentage ??
+      record.ownership ??
+      record.control_percentage ??
+      0,
+  ),
+  nationality: record.nationality || "",
+});
 
 export default function Registers() {
   const { toast } = useToast();
-  
-  // Use the same ID logic as your working component
-  const companyId = localStorage.getItem('selectedCompanyId') || "9";
+
+  const companyId = localStorage.getItem("selectedCompanyId") || "9";
 
   // Data States
-  const [shareRecords, setShareRecords] = useState([]);
-  const [chargeRecords, setChargeRecords] = useState([]);
-  const [beneficialOwners, setBeneficialOwners] = useState([]);
+  const [shareRecords, setShareRecords] = useState<ShareRecord[]>([]);
+  const [chargeRecords, setChargeRecords] = useState<ChargeRecord[]>([]);
+  const [beneficialOwners, setBeneficialOwners] = useState<BeneficialOwnerRecord[]>([]);
   
   // UI States
   const [isLoading, setIsLoading] = useState(true);
@@ -43,47 +103,61 @@ export default function Registers() {
   const [showBeneficialForm, setShowBeneficialForm] = useState(false);
   const [showDividendForm, setShowDividendForm] = useState(false);
 
-  // --- 1. FETCH DATA (Following working example pattern) ---
   const fetchData = useCallback(async (isManual = false) => {
     if (isManual) setIsSyncing(true);
     else setIsLoading(true);
 
+    const headers = { "x-company-id": companyId };
+    const endpoints = [
+      axios.get(`${API_BASE}/api/company/${companyId}/certificates`, { headers }),
+      axios.get(`${API_BASE}/api/company/${companyId}/charges`, { headers }),
+      axios.get(`${API_BASE}/api/company/${companyId}/beneficial-owners`, { headers }),
+    ] as const;
+
     try {
-      const headers = { "x-company-id": companyId };
-      
-      // We fetch individually to handle specific errors and mapping
-      const certsRes = await axios.get(`/api/company/${companyId}/certificates`, { headers });
-      const chargesRes = await axios.get(`/api/company/${companyId}/charges`, { headers });
-      const boRes = await axios.get(`/api/company/${companyId}/beneficial-owners`, { headers });
+      const [certsResult, chargesResult, ownersResult] = await Promise.allSettled(endpoints);
+      const failedSections: string[] = [];
 
-      // MAPPING: Ensure data matches frontend expectations
-      setShareRecords(certsRes.data.map((c: any) => ({
-        id: c.id,
-        certificateNo: c.certificate_no,
-        holder: c.holder_name,
-        shares: c.shares_count,
-        date: c.issue_date ? new Date(c.issue_date).toISOString().split('T')[0] : ""
-      })));
-
-      setChargeRecords(chargesRes.data.map((ch: any) => ({
-        id: ch.id,
-        type: ch.charge_type,
-        amount: ch.amount_display,
-        creditor: ch.creditor_name,
-        date: ch.registration_date ? new Date(ch.registration_date).toISOString().split('T')[0] : "",
-        status: ch.status
-      })));
-
-      setBeneficialOwners(boRes.data);
-
-      if (isManual) {
-        toast({ title: "Sync Complete", description: "Registers updated from database." });
+      if (certsResult.status === "fulfilled") {
+        const records = Array.isArray(certsResult.value.data) ? certsResult.value.data : [];
+        setShareRecords(records.map(mapShareRecord));
+      } else {
+        console.error("Share certificates fetch failed:", certsResult.reason);
+        setShareRecords([]);
+        failedSections.push("share certificates");
       }
-    } catch (error: any) {
-      console.error("Fetch Error:", error);
+
+      if (chargesResult.status === "fulfilled") {
+        const records = Array.isArray(chargesResult.value.data) ? chargesResult.value.data : [];
+        setChargeRecords(records.map(mapChargeRecord));
+      } else {
+        console.error("Charges fetch failed:", chargesResult.reason);
+        setChargeRecords([]);
+        failedSections.push("charges");
+      }
+
+      if (ownersResult.status === "fulfilled") {
+        const records = Array.isArray(ownersResult.value.data) ? ownersResult.value.data : [];
+        setBeneficialOwners(records.map(mapBeneficialOwnerRecord));
+      } else {
+        console.error("Beneficial owners fetch failed:", ownersResult.reason);
+        setBeneficialOwners([]);
+        failedSections.push("beneficial owners");
+      }
+
+      if (failedSections.length === 0) {
+        if (isManual) {
+          toast({ title: "Sync Complete", description: "Registers updated from database." });
+        }
+        return;
+      }
+
       toast({
-        title: "Connection Error",
-        description: error.response?.data?.error || "Could not load register data.",
+        title: failedSections.length === 3 ? "Connection Error" : "Partial Data Loaded",
+        description:
+          failedSections.length === 3
+            ? "Could not load register data."
+            : `Some sections could not be loaded: ${failedSections.join(", ")}.`,
         variant: "destructive",
       });
     } finally {

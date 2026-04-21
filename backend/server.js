@@ -55,6 +55,100 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 const safeDelete = async (filePath) => { if (filePath) try { await fsPromises.unlink(filePath); } catch { } };
 const normalizePath = (p) => p ? p.replace(/\\/g, '/') : null;
+const DEFAULT_ACCOUNTS = [
+    { code: '1001', name: 'Cash at Bank', category: 'asset' },
+    { code: '1002', name: 'Petty Cash', category: 'asset' },
+    { code: '1003', name: 'Mobile Money Account', category: 'asset' },
+    { code: '1101', name: 'Accounts Receivable', category: 'asset' },
+    { code: '1201', name: 'Inventory', category: 'asset' },
+    { code: '1301', name: 'Fixed Assets', category: 'asset' },
+    { code: '1302', name: 'Accumulated Depreciation', category: 'asset' },
+    { code: '2001', name: 'Accounts Payable', category: 'liability' },
+    { code: '2101', name: 'VAT Payable', category: 'liability' },
+    { code: '2102', name: 'PAYE Payable', category: 'liability' },
+    { code: '2103', name: 'RSSB Payable', category: 'liability' },
+    { code: '2104', name: 'Dividend Payable', category: 'liability' },
+    { code: '2201', name: 'Accrued Expenses', category: 'liability' },
+    { code: '3000', name: 'Share Capital', category: 'equity' },
+    { code: '3001', name: 'Retained Earnings', category: 'equity' },
+    { code: '3002', name: 'Owner Drawings', category: 'equity' },
+    { code: '3003', name: 'Equity Adjustment', category: 'equity' },
+    { code: '4001', name: 'Sales Revenue', category: 'revenue' },
+    { code: '4002', name: 'Service Revenue', category: 'revenue' },
+    { code: '4003', name: 'Other Income', category: 'revenue' },
+    { code: '5001', name: 'General Expenses', category: 'expense' },
+    { code: '5002', name: 'Salaries & Wages', category: 'expense' },
+    { code: '5003', name: 'Rent Expense', category: 'expense' },
+    { code: '5004', name: 'Utilities Expense', category: 'expense' },
+    { code: '5005', name: 'Office Supplies', category: 'expense' },
+    { code: '5006', name: 'Professional Fees', category: 'expense' },
+    { code: '5007', name: 'Depreciation Expense', category: 'expense' },
+    { code: '5008', name: 'Other Expenses', category: 'expense' }
+];
+
+const inferAccountCategory = (code = '') => {
+    const prefix = String(code)[0];
+    switch (prefix) {
+        case '1': return 'asset';
+        case '2': return 'liability';
+        case '3': return 'equity';
+        case '4': return 'revenue';
+        case '5': return 'expense';
+        default: return 'other';
+    }
+};
+
+const buildJournalReference = (journalId, referenceNo) => referenceNo || `JE-${String(journalId).padStart(6, '0')}`;
+
+const ensureDefaultAccounts = async (companyId, conn = db) => {
+    for (const account of DEFAULT_ACCOUNTS) {
+        const [rows] = await conn.query(
+            'SELECT id FROM accounts WHERE company_id = ? AND code = ? LIMIT 1',
+            [companyId, account.code]
+        );
+
+        if (!rows.length) {
+            await conn.query('INSERT INTO accounts SET ?', {
+                company_id: companyId,
+                code: account.code,
+                name: account.name,
+                category: account.category,
+                is_active: 1
+            });
+        }
+    }
+};
+
+const ensureAccountByCode = async (companyId, account, conn = db) => {
+    const code = String(account.account_code || account.code || '').trim();
+    if (!code) throw new AppError('Account code is required', 400);
+
+    const [rows] = await conn.query(
+        'SELECT id, code, name, category FROM accounts WHERE company_id = ? AND code = ? LIMIT 1',
+        [companyId, code]
+    );
+
+    if (rows.length) {
+        return rows[0];
+    }
+
+    const newAccount = {
+        company_id: companyId,
+        code,
+        name: (account.account_name || account.name || `Account ${code}`).trim(),
+        category: inferAccountCategory(code),
+        is_active: 1
+    };
+
+    const [result] = await conn.query('INSERT INTO accounts SET ?', newAccount);
+    return { id: result.insertId, code: newAccount.code, name: newAccount.name, category: newAccount.category };
+};
+
+const generateInvoiceNumber = (type) => {
+    const year = new Date().getFullYear();
+    const prefix = type === 'invoice' ? 'INV' : 'REC';
+    return `${prefix}-${year}-${Date.now()}`;
+};
 
 // --- 4. MIDDLEWARE ---
 
@@ -768,6 +862,7 @@ app.get('/api/company/:companyId/shareholders', validateCompany, asyncHandler(as
 
 // 1. GET Chart of Accounts (For the dropdown)
 app.get('/api/company/:companyId/accounts', validateCompany, asyncHandler(async (req, res) => {
+    await ensureDefaultAccounts(req.companyId);
     const [rows] = await db.query(
         'SELECT * FROM accounts WHERE company_id = ? AND is_active = 1 ORDER BY code ASC',
         [req.companyId]
@@ -775,7 +870,75 @@ app.get('/api/company/:companyId/accounts', validateCompany, asyncHandler(async 
     res.json(rows);
 }));
 
-// 2. GET Journal Entries (History)
+// 2. GET Accounting Books (Page-level data for AccountingBooks.tsx)
+app.get('/api/company/:companyId/accounting-books', validateCompany, asyncHandler(async (req, res) => {
+    await ensureDefaultAccounts(req.companyId);
+
+    const [entries] = await db.query(`
+        SELECT
+            gl.id,
+            je.id AS journal_entry_id,
+            je.date,
+            COALESCE(je.reference_no, CONCAT('JE-', LPAD(je.id, 6, '0'))) AS reference,
+            a.id AS account_id,
+            a.code AS account_code,
+            a.name AS account_name,
+            je.description,
+            COALESCE(je.entry_type, 'manual') AS source_type,
+            gl.debit,
+            gl.credit,
+            sd.file_name AS document_file_name,
+            sd.file_path AS document_file_path,
+            je.created_at
+        FROM journal_entries je
+        INNER JOIN general_ledger gl ON gl.journal_entry_id = je.id
+        INNER JOIN accounts a ON a.id = gl.account_id
+        LEFT JOIN supporting_documents sd ON sd.journal_entry_id = je.id
+        WHERE je.company_id = ?
+        ORDER BY je.date DESC, je.created_at DESC, gl.id DESC
+    `, [req.companyId]);
+
+    const [summaryRows] = await db.query(`
+        SELECT
+            COUNT(DISTINCT je.id) AS journalCount,
+            COUNT(gl.id) AS lineCount,
+            COALESCE(SUM(gl.debit), 0) AS totalDebits,
+            COALESCE(SUM(gl.credit), 0) AS totalCredits
+        FROM journal_entries je
+        LEFT JOIN general_ledger gl ON gl.journal_entry_id = je.id
+        WHERE je.company_id = ?
+    `, [req.companyId]);
+
+    const summary = summaryRows[0] || {
+        journalCount: 0,
+        lineCount: 0,
+        totalDebits: 0,
+        totalCredits: 0
+    };
+
+    res.json({
+        entries,
+        summary: {
+            journalCount: Number(summary.journalCount || 0),
+            lineCount: Number(summary.lineCount || 0),
+            totalDebits: Number(summary.totalDebits || 0),
+            totalCredits: Number(summary.totalCredits || 0),
+            netBalance: Number(summary.totalDebits || 0) - Number(summary.totalCredits || 0)
+        }
+    });
+}));
+
+// 3. GET Chart of Accounts for Accounting Books UI
+app.get('/api/company/:companyId/accounting-books/accounts', validateCompany, asyncHandler(async (req, res) => {
+    await ensureDefaultAccounts(req.companyId);
+    const [rows] = await db.query(
+        'SELECT * FROM accounts WHERE company_id = ? AND is_active = 1 ORDER BY code ASC',
+        [req.companyId]
+    );
+    res.json(rows);
+}));
+
+// 4. GET Journal Entries (History)
 app.get('/api/company/:companyId/ledger/entries', validateCompany, asyncHandler(async (req, res) => {
     const [rows] = await db.query(`
         SELECT je.*, 
@@ -788,11 +951,157 @@ app.get('/api/company/:companyId/ledger/entries', validateCompany, asyncHandler(
     res.json(rows);
 }));
 
-// 3. POST New Accounting Entry (The "Double Entry" Engine)
+// 5. POST Manual Accounting Entry (Accounting Books form)
+app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single('receipt'), validateCompany, asyncHandler(async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        await ensureDefaultAccounts(req.companyId, conn);
+
+        const {
+            date,
+            description,
+            entryType,
+            account_id,
+            offset_account_id,
+            debit,
+            credit,
+            reference_no
+        } = req.body;
+
+        const debitValue = Number(debit || 0);
+        const creditValue = Number(credit || 0);
+
+        if (!date || !description || !account_id || !offset_account_id) {
+            throw new AppError('Date, description, main account, and balancing account are required', 400);
+        }
+
+        if (Number(account_id) === Number(offset_account_id)) {
+            throw new AppError('Main account and balancing account must be different', 400);
+        }
+
+        if ((debitValue > 0 && creditValue > 0) || (debitValue <= 0 && creditValue <= 0)) {
+            throw new AppError('Provide either a debit amount or a credit amount', 400);
+        }
+
+        const [[primaryAccount]] = await conn.query(
+            'SELECT id FROM accounts WHERE company_id = ? AND id = ?',
+            [req.companyId, account_id]
+        );
+        const [[offsetAccount]] = await conn.query(
+            'SELECT id FROM accounts WHERE company_id = ? AND id = ?',
+            [req.companyId, offset_account_id]
+        );
+
+        if (!primaryAccount || !offsetAccount) {
+            throw new AppError('One or more selected accounts were not found for this company', 404);
+        }
+
+        const [jeResult] = await conn.query('INSERT INTO journal_entries SET ?', {
+            company_id: req.companyId,
+            date,
+            description,
+            entry_type: entryType || 'manual',
+            reference_no: reference_no || null
+        });
+
+        const journalId = jeResult.insertId;
+
+        await conn.query('INSERT INTO general_ledger SET ?', {
+            journal_entry_id: journalId,
+            account_id: Number(account_id),
+            debit: debitValue,
+            credit: creditValue
+        });
+
+        await conn.query('INSERT INTO general_ledger SET ?', {
+            journal_entry_id: journalId,
+            account_id: Number(offset_account_id),
+            debit: creditValue,
+            credit: debitValue
+        });
+
+        if (req.file) {
+            await conn.query('INSERT INTO supporting_documents SET ?', {
+                journal_entry_id: journalId,
+                file_name: req.file.originalname,
+                file_path: normalizePath(req.file.path),
+                file_type: req.file.mimetype
+            });
+        }
+
+        await conn.commit();
+        res.status(201).json({
+            success: true,
+            journalId,
+            reference: buildJournalReference(journalId, reference_no)
+        });
+    } catch (err) {
+        await conn.rollback();
+        throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+// 6. POST Synced Quick Transaction Entries (Universal Transaction form)
+app.post('/api/company/:companyId/accounting-books/transactions', validateCompany, asyncHandler(async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        await ensureDefaultAccounts(req.companyId, conn);
+
+        const { date, description, reference, source_type, entries } = req.body;
+        if (!date || !description || !Array.isArray(entries) || entries.length < 2) {
+            throw new AppError('Date, description, and at least two accounting entries are required', 400);
+        }
+
+        const totalDebits = entries.reduce((sum, entry) => sum + Number(entry.debit || 0), 0);
+        const totalCredits = entries.reduce((sum, entry) => sum + Number(entry.credit || 0), 0);
+
+        if (Math.abs(totalDebits - totalCredits) > 0.01) {
+            throw new AppError('Transaction does not balance: total debits must equal total credits', 400);
+        }
+
+        const [jeResult] = await conn.query('INSERT INTO journal_entries SET ?', {
+            company_id: req.companyId,
+            date,
+            description,
+            entry_type: source_type || 'manual',
+            reference_no: reference || null
+        });
+        const journalId = jeResult.insertId;
+
+        for (const line of entries) {
+            const account = await ensureAccountByCode(req.companyId, line, conn);
+            await conn.query('INSERT INTO general_ledger SET ?', {
+                journal_entry_id: journalId,
+                account_id: account.id,
+                debit: Number(line.debit || 0),
+                credit: Number(line.credit || 0)
+            });
+        }
+
+        await conn.commit();
+        res.status(201).json({
+            success: true,
+            journalId,
+            reference: buildJournalReference(journalId, reference)
+        });
+    } catch (err) {
+        await conn.rollback();
+        throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+// 7. POST New Accounting Entry (Legacy double-entry route kept for compatibility)
 app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), validateCompany, asyncHandler(async (req, res) => {
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
+        await ensureDefaultAccounts(req.companyId, conn);
 
         const { 
             date, 
@@ -801,10 +1110,9 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
             account_id, 
             debit, 
             credit,
-            offset_account_id // The account that balances the entry (e.g., Cash or Bank)
+            offset_account_id
         } = req.body;
 
-        // A. Insert Journal Header
         const [jeResult] = await conn.query('INSERT INTO journal_entries SET ?', {
             company_id: req.companyId,
             date,
@@ -814,7 +1122,6 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
         });
         const journalId = jeResult.insertId;
 
-        // B. Insert Ledger Line 1 (The Primary Account from Form)
         await conn.query('INSERT INTO general_ledger SET ?', {
             journal_entry_id: journalId,
             account_id: account_id,
@@ -822,16 +1129,13 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
             credit: credit || 0
         });
 
-        // C. Insert Ledger Line 2 (The Balancing Account)
-        // Logic: If user debited Account A, we must credit Account B
         await conn.query('INSERT INTO general_ledger SET ?', {
             journal_entry_id: journalId,
             account_id: offset_account_id,
-            debit: credit || 0, // Swap debit/credit to balance
+            debit: credit || 0,
             credit: debit || 0
         });
 
-        // D. Handle Receipt Upload
         if (req.file) {
             await conn.query('INSERT INTO supporting_documents SET ?', {
                 journal_entry_id: journalId,
@@ -852,7 +1156,7 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
     }
 }));
 
-// 4. GET Financial Trial Balance
+// 8. GET Financial Trial Balance
 app.get('/api/company/:companyId/ledger/trial-balance', validateCompany, asyncHandler(async (req, res) => {
     const [rows] = await db.query(`
         SELECT a.name, a.code, a.category,
@@ -866,6 +1170,440 @@ app.get('/api/company/:companyId/ledger/trial-balance', validateCompany, asyncHa
         [req.companyId]
     );
     res.json(rows);
+}));
+
+// 9. GET Invoices & Receipts Register
+app.get('/api/company/:companyId/invoices-receipts', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM invoice WHERE company_id = ? ORDER BY date DESC, created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map((row) => ({
+        ...row,
+        amount: Number(row.amount || 0),
+        vat: Number(row.vat || 0),
+        total: Number(row.total || 0)
+    }));
+
+    const invoices = records.filter((record) => record.type === 'invoice');
+    const receipts = records.filter((record) => record.type === 'receipt');
+
+    res.json({
+        records,
+        summary: {
+            totalInvoices: invoices.length,
+            totalReceipts: receipts.length,
+            totalSales: invoices.reduce((sum, item) => sum + item.total, 0),
+            totalPurchases: receipts.reduce((sum, item) => sum + item.total, 0),
+            outstandingInvoices: invoices.filter((item) => item.status !== 'paid').length,
+            pendingReceipts: receipts.filter((item) => item.status === 'draft').length
+        }
+    });
+}));
+
+// 10. POST Manual Invoice/Receipt Record
+app.post('/api/company/:companyId/invoices-receipts', validateCompany, asyncHandler(async (req, res) => {
+    const {
+        transaction_id,
+        type,
+        number,
+        party_name,
+        tin,
+        description,
+        amount,
+        vat,
+        total,
+        attachment_url,
+        date,
+        due_date,
+        status,
+        payment_method,
+        phone_number,
+        momo_reference,
+        tax_category
+    } = req.body;
+
+    if (!type || !party_name || !date) {
+        throw new AppError('Type, party name, and date are required', 400);
+    }
+
+    const record = {
+        company_id: req.companyId,
+        transaction_id: transaction_id || null,
+        type,
+        number: number || generateInvoiceNumber(type),
+        party_name,
+        tin: tin || null,
+        description: description || null,
+        amount: Number(amount || 0),
+        vat: Number(vat || 0),
+        total: Number(total || amount || 0),
+        attachment_url: attachment_url || null,
+        date,
+        due_date: due_date || null,
+        status: status || 'draft',
+        payment_method: payment_method || null,
+        phone_number: phone_number || null,
+        momo_reference: momo_reference || null,
+        tax_category: tax_category || null
+    };
+
+    const [result] = await db.query('INSERT INTO invoice SET ?', record);
+    const [[saved]] = await db.query('SELECT * FROM invoice WHERE id = ?', [result.insertId]);
+    res.status(201).json(saved);
+}));
+
+// 11. Sync Universal Transaction sales/purchases into Invoice register
+app.post('/api/company/:companyId/invoices-receipts/sync-transaction', validateCompany, asyncHandler(async (req, res) => {
+    const {
+        transaction_id,
+        type,
+        number,
+        party_name,
+        tin,
+        description,
+        amount,
+        vat,
+        total,
+        attachment_url,
+        date,
+        due_date,
+        status,
+        payment_method,
+        phone_number,
+        momo_reference,
+        tax_category
+    } = req.body;
+
+    if (!transaction_id || !type || !party_name || !date) {
+        throw new AppError('transaction_id, type, party_name, and date are required', 400);
+    }
+
+    const invoiceType = type === 'purchase' || type === 'receipt' ? 'receipt' : 'invoice';
+    const recordNumber = number || generateInvoiceNumber(invoiceType);
+    const recordStatus = status || 'draft';
+    const recordTotal = Number(total || amount || 0);
+    const recordVat = Number(vat || 0);
+    const recordAmount = Number(amount || recordTotal - recordVat || 0);
+
+    const [existing] = await db.query(
+        'SELECT id FROM invoice WHERE company_id = ? AND transaction_id = ? AND type = ? LIMIT 1',
+        [req.companyId, transaction_id, invoiceType]
+    );
+
+    const record = {
+        company_id: req.companyId,
+        transaction_id,
+        type: invoiceType,
+        number: recordNumber,
+        party_name,
+        tin: tin || null,
+        description: description || null,
+        amount: recordAmount,
+        vat: recordVat,
+        total: recordTotal,
+        attachment_url: attachment_url || null,
+        date,
+        due_date: due_date || null,
+        status: recordStatus,
+        payment_method: payment_method || null,
+        phone_number: phone_number || null,
+        momo_reference: momo_reference || null,
+        tax_category: tax_category || null
+    };
+
+    let savedId;
+    if (existing.length) {
+        savedId = existing[0].id;
+        await db.query('UPDATE invoice SET ? WHERE id = ? AND company_id = ?', [record, savedId, req.companyId]);
+    } else {
+        const [result] = await db.query('INSERT INTO invoice SET ?', record);
+        savedId = result.insertId;
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM invoice WHERE id = ?', [savedId]);
+    res.status(existing.length ? 200 : 201).json(saved);
+}));
+
+// 12. GET Contracts & Agreements Register
+app.get('/api/company/:companyId/contracts', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM contract WHERE company_id = ? ORDER BY end_date ASC, created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map((row) => ({
+        ...row,
+        value: Number(row.value || 0)
+    }));
+
+    const summary = {
+        totalContracts: records.length,
+        activeContracts: records.filter((record) => record.status === 'Active').length,
+        expiringSoon: records.filter((record) => {
+            if (record.status !== 'Active') return false;
+            const endDate = new Date(record.end_date);
+            const today = new Date();
+            const diffDays = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+            return diffDays >= 0 && diffDays <= 30;
+        }).length,
+        totalValue: records.reduce((sum, record) => sum + record.value, 0)
+    };
+
+    res.json({ records, summary });
+}));
+
+// 13. POST Contract / Agreement
+app.post('/api/company/:companyId/contracts', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
+    const {
+        title,
+        type,
+        parties,
+        start_date,
+        end_date,
+        status,
+        value,
+        notes
+    } = req.body;
+
+    if (!title || !type || !parties || !start_date || !end_date) {
+        throw new AppError('Title, type, parties, start date, and end date are required', 400);
+    }
+
+    const contractData = {
+        company_id: req.companyId,
+        title: title.trim(),
+        type: type.trim(),
+        parties: parties.trim(),
+        start_date,
+        end_date,
+        status: status || 'Active',
+        value: Number(value || 0),
+        file_name: req.file?.originalname || null,
+        file_path: normalizePath(req.file?.path),
+        notes: notes || null
+    };
+
+    const [result] = await db.query('INSERT INTO contract SET ?', contractData);
+    const [[saved]] = await db.query('SELECT * FROM contract WHERE id = ?', [result.insertId]);
+    saved.value = Number(saved.value || 0);
+    res.status(201).json(saved);
+}));
+// ==========================================
+// --- ROLES ROUTES ---
+// ==========================================
+
+app.get('/api/roles', asyncHandler(async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM roles ORDER BY name ASC');
+    res.json(rows);
+}));
+
+app.post('/api/roles', asyncHandler(async (req, res) => {
+    const { name } = req.body;
+    if (!name) throw new AppError('Role name is required', 400);
+    const [result] = await db.query('INSERT INTO roles SET ?', [{ name: name.trim() }]);
+    const [[role]] = await db.query('SELECT * FROM roles WHERE id = ?', [result.insertId]);
+    res.status(201).json(role);
+}));
+
+app.put('/api/roles/:id', asyncHandler(async (req, res) => {
+    const { name } = req.body;
+    if (!name) throw new AppError('Role name is required', 400);
+    const [result] = await db.query('UPDATE roles SET name = ? WHERE id = ?', [name.trim(), req.params.id]);
+    if (result.affectedRows === 0) throw new AppError('Role not found', 404);
+    const [[role]] = await db.query('SELECT * FROM roles WHERE id = ?', [req.params.id]);
+    res.json(role);
+}));
+
+app.delete('/api/roles/:id', asyncHandler(async (req, res) => {
+    const [[{ count }]] = await db.query('SELECT COUNT(*) as count FROM users WHERE role_id = ?', [req.params.id]);
+    if (count > 0) throw new AppError(`Cannot delete: ${count} user(s) assigned to this role`, 409);
+    const [result] = await db.query('DELETE FROM roles WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) throw new AppError('Role not found', 404);
+    res.json({ success: true, message: 'Role deleted successfully' });
+}));
+
+// ==========================================
+// --- DEPARTMENTS ROUTES ---
+// ==========================================
+
+app.get('/api/departments', asyncHandler(async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM departments ORDER BY name ASC');
+    res.json(rows);
+}));
+
+app.post('/api/departments', asyncHandler(async (req, res) => {
+    const { name } = req.body;
+    if (!name) throw new AppError('Department name is required', 400);
+    const [result] = await db.query('INSERT INTO departments SET ?', [{ name: name.trim() }]);
+    const [[dept]] = await db.query('SELECT * FROM departments WHERE id = ?', [result.insertId]);
+    res.status(201).json(dept);
+}));
+
+app.put('/api/departments/:id', asyncHandler(async (req, res) => {
+    const { name } = req.body;
+    if (!name) throw new AppError('Department name is required', 400);
+    const [result] = await db.query('UPDATE departments SET name = ? WHERE id = ?', [name.trim(), req.params.id]);
+    if (result.affectedRows === 0) throw new AppError('Department not found', 404);
+    const [[dept]] = await db.query('SELECT * FROM departments WHERE id = ?', [req.params.id]);
+    res.json(dept);
+}));
+
+app.delete('/api/departments/:id', asyncHandler(async (req, res) => {
+    const [[{ count }]] = await db.query('SELECT COUNT(*) as count FROM users WHERE department_id = ?', [req.params.id]);
+    if (count > 0) throw new AppError(`Cannot delete: ${count} user(s) assigned to this department`, 409);
+    const [result] = await db.query('DELETE FROM departments WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) throw new AppError('Department not found', 404);
+    res.json({ success: true, message: 'Department deleted successfully' });
+}));
+
+// ==========================================
+// --- PERMISSIONS ROUTES ---
+// ==========================================
+
+app.get('/api/permissions', asyncHandler(async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM permissions ORDER BY name ASC');
+    res.json(rows);
+}));
+
+app.post('/api/permissions', asyncHandler(async (req, res) => {
+    const { name } = req.body;
+    if (!name) throw new AppError('Permission name is required', 400);
+    const [result] = await db.query('INSERT INTO permissions SET ?', [{ name: name.trim() }]);
+    const [[perm]] = await db.query('SELECT * FROM permissions WHERE id = ?', [result.insertId]);
+    res.status(201).json(perm);
+}));
+
+app.delete('/api/permissions/:id', asyncHandler(async (req, res) => {
+    await db.query('DELETE FROM user_permissions WHERE permission_id = ?', [req.params.id]);
+    const [result] = await db.query('DELETE FROM permissions WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) throw new AppError('Permission not found', 404);
+    res.json({ success: true, message: 'Permission deleted successfully' });
+}));
+
+// ==========================================
+// --- USERS ROUTES ---
+// ==========================================
+
+app.get('/api/users', asyncHandler(async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT 
+            u.id, u.name, u.email, u.status, u.last_login, u.created_at,
+            r.id as role_id, r.name as role,
+            d.id as department_id, d.name as department,
+            GROUP_CONCAT(p.name ORDER BY p.name SEPARATOR ',') as permissions
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        LEFT JOIN departments d ON u.department_id = d.id
+        LEFT JOIN user_permissions up ON u.id = up.user_id
+        LEFT JOIN permissions p ON up.permission_id = p.id
+        GROUP BY u.id
+        ORDER BY u.created_at DESC
+    `);
+
+    const users = rows.map(u => ({
+        ...u,
+        permissions: u.permissions ? u.permissions.split(',') : []
+    }));
+
+    res.json(users);
+}));
+
+app.get('/api/users/:id', asyncHandler(async (req, res) => {
+    const [[user]] = await db.query(`
+        SELECT 
+            u.id, u.name, u.email, u.status, u.last_login, u.created_at,
+            r.id as role_id, r.name as role,
+            d.id as department_id, d.name as department
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        LEFT JOIN departments d ON u.department_id = d.id
+        WHERE u.id = ?
+    `, [req.params.id]);
+
+    if (!user) throw new AppError('User not found', 404);
+
+    const [perms] = await db.query(`
+        SELECT p.name FROM permissions p
+        JOIN user_permissions up ON p.id = up.permission_id
+        WHERE up.user_id = ?
+    `, [user.id]);
+
+    res.json({ ...user, permissions: perms.map(p => p.name) });
+}));
+
+app.post('/api/users', asyncHandler(async (req, res) => {
+    const { name, email, password, role_id, department_id, status, permissions = [] } = req.body;
+
+    if (!name || !email || !password) throw new AppError('Name, email and password are required', 400);
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    const [result] = await db.query('INSERT INTO users SET ?', [{
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        password_hash,
+        role_id: role_id || null,
+        department_id: department_id || null,
+        status: status || 'Active'
+    }]);
+
+    const userId = result.insertId;
+
+    if (permissions.length > 0) {
+        const permRows = permissions.map(pid => [userId, pid]);
+        await db.query('INSERT INTO user_permissions (user_id, permission_id) VALUES ?', [permRows]);
+    }
+
+    const [[newUser]] = await db.query('SELECT id, name, email, status, created_at FROM users WHERE id = ?', [userId]);
+    res.status(201).json(newUser);
+}));
+
+app.put('/api/users/:id', asyncHandler(async (req, res) => {
+    const { name, email, password, role_id, department_id, status, permissions } = req.body;
+
+    const [[existing]] = await db.query('SELECT id FROM users WHERE id = ?', [req.params.id]);
+    if (!existing) throw new AppError('User not found', 404);
+
+    const updateData = {
+        ...(name && { name: name.trim() }),
+        ...(email && { email: email.trim().toLowerCase() }),
+        ...(role_id !== undefined && { role_id }),
+        ...(department_id !== undefined && { department_id }),
+        ...(status && { status })
+    };
+
+    if (password) updateData.password_hash = await bcrypt.hash(password, 10);
+
+    await db.query('UPDATE users SET ?, updated_at = NOW() WHERE id = ?', [updateData, req.params.id]);
+
+    if (Array.isArray(permissions)) {
+        await db.query('DELETE FROM user_permissions WHERE user_id = ?', [req.params.id]);
+        if (permissions.length > 0) {
+            const permRows = permissions.map(pid => [req.params.id, pid]);
+            await db.query('INSERT INTO user_permissions (user_id, permission_id) VALUES ?', [permRows]);
+        }
+    }
+
+    const [[updatedUser]] = await db.query('SELECT id, name, email, status, updated_at FROM users WHERE id = ?', [req.params.id]);
+    res.json(updatedUser);
+}));
+
+app.patch('/api/users/:id/status', asyncHandler(async (req, res) => {
+    const { status } = req.body;
+    if (!['Active', 'Inactive', 'Suspended'].includes(status)) throw new AppError('Invalid status value', 400);
+    const [result] = await db.query('UPDATE users SET status = ?, updated_at = NOW() WHERE id = ?', [status, req.params.id]);
+    if (result.affectedRows === 0) throw new AppError('User not found', 404);
+    res.json({ success: true, message: `User status updated to ${status}` });
+}));
+
+app.delete('/api/users/:id', asyncHandler(async (req, res) => {
+    const [[user]] = await db.query('SELECT id FROM users WHERE id = ?', [req.params.id]);
+    if (!user) throw new AppError('User not found', 404);
+    await db.query('DELETE FROM user_permissions WHERE user_id = ?', [req.params.id]);
+    await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
+    res.json({ success: true, message: 'User deleted successfully' });
 }));
 app.use((req, res) => { res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found` }); });
 

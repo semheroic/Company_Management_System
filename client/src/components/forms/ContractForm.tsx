@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -7,58 +6,75 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import ContractRegisterService from "@/services/contractRegisterService";
 
 interface ContractFormProps {
   open: boolean;
   onClose: () => void;
-  onAdd: (contract: any) => void;
+  onAdd: () => void | Promise<void>;
 }
 
 export function ContractForm({ open, onClose, onAdd }: ContractFormProps) {
   const { toast } = useToast();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     contractTitle: "",
     partiesInvolved: "",
     type: "",
     startDate: "",
     endDate: "",
-    status: "",
+    status: "Active",
     value: "",
-    file: null as File | null
+    notes: "",
+    file: null as File | null,
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Contract data:", formData);
-    
-    const newContract = {
-      id: Date.now(),
-      title: formData.contractTitle,
-      type: formData.type,
-      parties: formData.partiesInvolved,
-      startDate: formData.startDate,
-      endDate: formData.endDate,
-      status: formData.status,
-      value: parseInt(formData.value) || 0
-    };
-    
-    onAdd(newContract);
-    toast({
-      title: "Success",
-      description: "Contract added successfully"
-    });
-    
-    setFormData({
-      contractTitle: "",
-      partiesInvolved: "",
-      type: "",
-      startDate: "",
-      endDate: "",
-      status: "",
-      value: "",
-      file: null
-    });
-    onClose();
+    setIsSubmitting(true);
+
+    try {
+      await ContractRegisterService.create({
+        title: formData.contractTitle,
+        type: formData.type,
+        parties: formData.partiesInvolved,
+        start_date: formData.startDate,
+        end_date: formData.endDate,
+        status: formData.status,
+        value: Number(formData.value || 0),
+        notes: formData.notes,
+        file: formData.file,
+      });
+
+      toast({
+        title: "Success",
+        description: "Contract added successfully",
+      });
+
+      setFormData({
+        contractTitle: "",
+        partiesInvolved: "",
+        type: "",
+        startDate: "",
+        endDate: "",
+        status: "Active",
+        value: "",
+        notes: "",
+        file: null,
+      });
+
+      await onAdd();
+      onClose();
+    } catch (err: any) {
+      console.error("Contract creation failed:", err);
+      toast({
+        title: "Save Failed",
+        description: err.response?.data?.error || "Could not save contract to the backend.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -91,11 +107,11 @@ export function ContractForm({ open, onClose, onAdd }: ContractFormProps) {
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="lease">Lease</SelectItem>
-                  <SelectItem value="supplier">Supplier</SelectItem>
-                  <SelectItem value="consultant">Consultant</SelectItem>
-                  <SelectItem value="employment">Employment</SelectItem>
-                  <SelectItem value="nda">NDA</SelectItem>
+                  <SelectItem value="Lease">Lease</SelectItem>
+                  <SelectItem value="Supplier">Supplier</SelectItem>
+                  <SelectItem value="Consultant">Consultant</SelectItem>
+                  <SelectItem value="Employment">Employment</SelectItem>
+                  <SelectItem value="NDA">NDA</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -154,6 +170,15 @@ export function ContractForm({ open, onClose, onAdd }: ContractFormProps) {
             />
           </div>
           <div>
+            <Label htmlFor="notes">Notes</Label>
+            <Textarea
+              id="notes"
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              placeholder="Optional contract notes"
+            />
+          </div>
+          <div>
             <Label htmlFor="file">Contract Document</Label>
             <Input
               id="file"
@@ -164,8 +189,12 @@ export function ContractForm({ open, onClose, onAdd }: ContractFormProps) {
             />
           </div>
           <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">Add Contract</Button>
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Saving..." : "Add Contract"}
+            </Button>
           </div>
         </form>
       </DialogContent>

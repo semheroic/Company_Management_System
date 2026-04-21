@@ -1,71 +1,100 @@
-
-import { ArrowLeft, Plus, FileText, Upload, Download, Eye, Filter, AlertTriangle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, ArrowLeft, Download, Eye, FileText, Filter, Loader2, Plus, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
-import { Link } from "react-router-dom";
 import { ContractForm } from "@/components/forms/ContractForm";
+import ContractRegisterService, {
+  ContractRecord,
+  ContractSummary,
+} from "@/services/contractRegisterService";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 export default function ContractsAgreements() {
   const [showForm, setShowForm] = useState(false);
-  const [contracts, setContracts] = useState([
-    {
-      id: 1,
-      title: "Office Lease Agreement",
-      type: "Lease",
-      parties: "ABC Property Ltd & Our Company",
-      startDate: "2024-01-01",
-      endDate: "2025-12-31",
-      status: "Active",
-      value: 9600000
-    },
-    {
-      id: 2,
-      title: "IT Services Contract",
-      type: "Supplier",
-      parties: "TechCorp Solutions & Our Company",
-      startDate: "2023-06-01",
-      endDate: "2024-05-31",
-      status: "Expiring Soon",
-      value: 2400000
-    },
-    {
-      id: 3,
-      title: "Consulting Agreement",
-      type: "Consultant",
-      parties: "John Doe Consulting & Our Company",
-      startDate: "2024-03-01",
-      endDate: "2024-08-31",
-      status: "Active",
-      value: 1800000
-    }
-  ]);
-
+  const [contracts, setContracts] = useState<ContractRecord[]>([]);
+  const [summary, setSummary] = useState<ContractSummary>({
+    totalContracts: 0,
+    activeContracts: 0,
+    expiringSoon: 0,
+    totalValue: 0,
+  });
   const [filterType, setFilterType] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
 
-  const filteredContracts = contracts.filter(contract => 
-    filterType === "all" || contract.type.toLowerCase().includes(filterType.toLowerCase())
-  );
-
-  const addContract = (contract: any) => {
-    const newContract = {
-      ...contract,
-      id: Date.now()
-    };
-    setContracts([...contracts, newContract]);
-  };
-
-  const getStatusBadgeColor = (status: string) => {
-    switch (status) {
-      case "Active": return "bg-green-100 text-green-800";
-      case "Expiring Soon": return "bg-yellow-100 text-yellow-800";
-      case "Expired": return "bg-red-100 text-red-800";
-      default: return "bg-gray-100 text-gray-800";
+  const refreshData = async () => {
+    setIsLoading(true);
+    try {
+      const response = await ContractRegisterService.getAll();
+      setContracts(response.records || []);
+      setSummary(response.summary);
+    } catch (error) {
+      console.error("Failed to load contracts:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    void refreshData();
+  }, []);
+
+  const filteredContracts = contracts.filter((contract) => {
+    const query = searchTerm.toLowerCase();
+    const matchesType = filterType === "all" || contract.type.toLowerCase().includes(filterType.toLowerCase());
+    const matchesSearch =
+      query === "" ||
+      contract.title.toLowerCase().includes(query) ||
+      contract.parties.toLowerCase().includes(query) ||
+      contract.type.toLowerCase().includes(query);
+
+    return matchesType && matchesSearch;
+  });
+
+  const getStatusBadgeColor = (status: string, endDate: string) => {
+    if (status === "Active") {
+      const diffDays = Math.ceil((new Date(endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      if (diffDays >= 0 && diffDays <= 30) {
+        return "bg-yellow-100 text-yellow-800";
+      }
+      return "bg-green-100 text-green-800";
+    }
+
+    if (status === "Expired") return "bg-red-100 text-red-800";
+    return "bg-gray-100 text-gray-800";
+  };
+
+  const getDisplayStatus = (status: string, endDate: string) => {
+    if (status === "Active") {
+      const diffDays = Math.ceil((new Date(endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      if (diffDays >= 0 && diffDays <= 30) {
+        return "Expiring Soon";
+      }
+    }
+
+    return status;
+  };
+
+  const handleDownload = (contract: ContractRecord) => {
+    if (!contract.file_path) return;
+    window.open(`${API_BASE}/${contract.file_path}`, "_blank", "noopener,noreferrer");
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+          <p className="text-sm text-gray-600">Loading contracts...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -81,9 +110,9 @@ export default function ContractsAgreements() {
             <h1 className="text-2xl font-semibold">Contracts & Agreements</h1>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
+            <Button variant="outline" onClick={() => void refreshData()}>
               <Upload className="w-4 h-4 mr-2" />
-              Upload Contract
+              Refresh Register
             </Button>
             <Button onClick={() => setShowForm(true)}>
               <Plus className="w-4 h-4 mr-2" />
@@ -95,31 +124,25 @@ export default function ContractsAgreements() {
         <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">{contracts.length}</div>
+              <div className="text-2xl font-bold">{summary.totalContracts}</div>
               <div className="text-sm text-gray-600">Total Contracts</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-green-600">
-                {contracts.filter(c => c.status === "Active").length}
-              </div>
+              <div className="text-2xl font-bold text-green-600">{summary.activeContracts}</div>
               <div className="text-sm text-gray-600">Active</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-yellow-600">
-                {contracts.filter(c => c.status === "Expiring Soon").length}
-              </div>
+              <div className="text-2xl font-bold text-yellow-600">{summary.expiringSoon}</div>
               <div className="text-sm text-gray-600">Expiring Soon</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">
-                RWF {contracts.reduce((sum, c) => sum + c.value, 0).toLocaleString()}
-              </div>
+              <div className="text-2xl font-bold">RWF {summary.totalValue.toLocaleString()}</div>
               <div className="text-sm text-gray-600">Total Value</div>
             </CardContent>
           </Card>
@@ -133,8 +156,8 @@ export default function ContractsAgreements() {
                 Contracts Register
               </CardTitle>
               <div className="flex items-center gap-2">
-                <select 
-                  value={filterType} 
+                <select
+                  value={filterType}
                   onChange={(e) => setFilterType(e.target.value)}
                   className="border rounded px-3 py-1 text-sm"
                 >
@@ -142,8 +165,15 @@ export default function ContractsAgreements() {
                   <option value="lease">Lease</option>
                   <option value="supplier">Supplier</option>
                   <option value="consultant">Consultant</option>
+                  <option value="employment">Employment</option>
+                  <option value="nda">NDA</option>
                 </select>
-                <Input placeholder="Search contracts..." className="max-w-xs" />
+                <Input
+                  placeholder="Search contracts..."
+                  className="max-w-xs"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
                 <Button variant="outline" size="sm">
                   <Filter className="w-4 h-4" />
                 </Button>
@@ -165,46 +195,51 @@ export default function ContractsAgreements() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredContracts.map((contract) => (
-                  <TableRow key={contract.id}>
-                    <TableCell className="font-medium">{contract.title}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{contract.type}</Badge>
-                    </TableCell>
-                    <TableCell>{contract.parties}</TableCell>
-                    <TableCell>{contract.startDate}</TableCell>
-                    <TableCell>{contract.endDate}</TableCell>
-                    <TableCell>
-                      <Badge className={getStatusBadgeColor(contract.status)}>
-                        {contract.status === "Expiring Soon" && <AlertTriangle className="w-3 h-3 mr-1" />}
-                        {contract.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {contract.value.toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="sm">
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm">
-                          <Download className="w-4 h-4" />
-                        </Button>
-                      </div>
+                {filteredContracts.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-8 text-gray-500">
+                      No contracts found. Add a contract to start the register.
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  filteredContracts.map((contract) => {
+                    const displayStatus = getDisplayStatus(contract.status, contract.end_date);
+                    return (
+                      <TableRow key={contract.id}>
+                        <TableCell className="font-medium">{contract.title}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{contract.type}</Badge>
+                        </TableCell>
+                        <TableCell>{contract.parties}</TableCell>
+                        <TableCell>{contract.start_date}</TableCell>
+                        <TableCell>{contract.end_date}</TableCell>
+                        <TableCell>
+                          <Badge className={getStatusBadgeColor(contract.status, contract.end_date)}>
+                            {displayStatus === "Expiring Soon" && <AlertTriangle className="w-3 h-3 mr-1" />}
+                            {displayStatus}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">{contract.value.toLocaleString()}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="sm" disabled={!contract.file_path} onClick={() => handleDownload(contract)}>
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" disabled={!contract.file_path} onClick={() => handleDownload(contract)}>
+                              <Download className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
 
-        <ContractForm 
-          open={showForm} 
-          onClose={() => setShowForm(false)} 
-          onAdd={addContract}
-        />
+        <ContractForm open={showForm} onClose={() => setShowForm(false)} onAdd={() => refreshData()} />
       </div>
     </div>
   );

@@ -1,13 +1,12 @@
-
+import { ReactNode, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 
 interface Column {
   key: string;
   label: string;
-  render?: (value: any, record: any) => React.ReactNode;
+  render?: (value: any, record: any) => ReactNode;
 }
 
 interface RegisterTableProps {
@@ -34,6 +33,21 @@ export function RegisterTable({
   searchPlaceholder = "Search records...",
   emptyState
 }: RegisterTableProps) {
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const filteredData = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return data;
+
+    return data.filter((record) =>
+      columns.some((column) => {
+        const value = record[column.key];
+        if (value === null || value === undefined) return false;
+        return String(value).toLowerCase().includes(query);
+      }),
+    );
+  }, [columns, data, searchTerm]);
+
   if (data.length === 0 && emptyState) {
     return (
       <div className="text-center py-8">
@@ -59,7 +73,12 @@ export function RegisterTable({
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <Input placeholder={searchPlaceholder} className="pl-10 w-64" />
+            <Input
+              placeholder={searchPlaceholder}
+              className="pl-10 w-64"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
           </div>
           <Button onClick={onAdd}>
             {addButtonLabel}
@@ -80,7 +99,13 @@ export function RegisterTable({
             </tr>
           </thead>
           <tbody>
-            {data.map((record) => (
+            {filteredData.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length + 1} className="py-8 px-2 text-center text-sm text-gray-500">
+                  No matching records found.
+                </td>
+              </tr>
+            ) : filteredData.map((record) => (
               <tr key={record.id} className="border-b hover:bg-gray-50">
                 {columns.map((column) => (
                   <td key={column.key} className="py-4 px-2">

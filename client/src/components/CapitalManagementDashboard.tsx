@@ -15,12 +15,16 @@ import { CompanyCapitalForm } from "@/components/forms/CompanyCapitalForm";
 import { BeneficialOwnerForm } from "@/components/forms/BeneficialOwnerForm";
 import { useToast } from "@/hooks/use-toast";
 
-export function CapitalManagementDashboard() {
+interface CapitalManagementDashboardProps {
+  companyId?: string;
+}
+
+export function CapitalManagementDashboard({ companyId: companyIdProp }: CapitalManagementDashboardProps) {
   const { toast } = useToast();
   const { id: routeId } = useParams<{ id: string }>();
   
   // Use route ID, or fallback to storage, or default to a test ID
-  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "9";
+  const companyId = companyIdProp || routeId || localStorage.getItem('selectedCompanyId') || "9";
 
   // UI State
   const [isLoading, setIsLoading] = useState(true);
@@ -268,7 +272,7 @@ export function CapitalManagementDashboard() {
                 {beneficialOwners.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
-                      No Beneficial Owners declared. Compliance requires listing all owners > 25%.
+                      No Beneficial Owners declared. Compliance requires listing all owners {" > "}25%.
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -355,7 +359,7 @@ export function CapitalManagementDashboard() {
       <CompanyCapitalForm 
         open={showCapitalForm} 
         onClose={() => setShowCapitalForm(false)} 
-        onAdd={loadDashboardData} 
+        onSuccess={loadDashboardData} 
       />
       
       <BeneficialOwnerForm 

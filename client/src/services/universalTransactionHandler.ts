@@ -2,6 +2,8 @@ import UniversalTransactionService from './universalTransactionService';
 import TransactionEngine from './transactionEngine';
 import AuditLogService from './auditLogService';
 import DataIntegrationService from './dataIntegrationService';
+import AccountingBooksService from './accountingBooksService';
+import InvoiceRegisterService from './invoiceRegisterService';
 
 export interface TransactionRequest {
   type: 'sale' | 'purchase' | 'expense' | 'income' | 'salary' | 'capital_contribution' | 'capital_withdrawal' | 'share_issuance' | 'dividend_declaration' | 'dividend_payment' | 'equity_adjustment' | 'asset_acquisition' | 'transfer';
@@ -254,6 +256,49 @@ class UniversalTransactionHandler {
           source_type: this.mapToTransactionEngineType(request.type),
           entries: entries
         });
+
+        await AccountingBooksService.syncGeneratedTransaction({
+          date: request.date,
+          description: request.description,
+          reference: request.reference_number || `REF-${transactionId}`,
+          source_type: request.type,
+          source_id: transactionId,
+          entries: entries.map((entry) => ({
+            account_code: entry.account_code,
+            account_name: entry.account,
+            debit: entry.debit || 0,
+            credit: entry.credit || 0,
+          })),
+        });
+
+        if (request.type === 'sale' || request.type === 'purchase') {
+          const vatEntry = entries.find((entry) => entry.account_code === '2101' || entry.account_code === '1002');
+          const registerType = request.type === 'sale' ? 'invoice' : 'receipt';
+          const partyName =
+            request.party_name ||
+            request.additional_data?.client ||
+            request.additional_data?.supplier ||
+            'Unknown Party';
+
+          await InvoiceRegisterService.syncTransaction({
+            transaction_id: transactionId,
+            type: registerType,
+            number: request.additional_data?.invoice_number || request.reference_number,
+            party_name: partyName,
+            tin: request.additional_data?.tin,
+            description: request.description,
+            amount: request.amount,
+            vat: vatEntry?.credit || vatEntry?.debit || 0,
+            total: request.amount,
+            date: request.date,
+            due_date: request.due_date,
+            status: request.payment_status,
+            payment_method: request.payment_method,
+            phone_number: request.additional_data?.phone_number,
+            momo_reference: request.additional_data?.momo_reference,
+            tax_category: request.additional_data?.tax_category,
+          });
+        }
       }
 
       return entries;

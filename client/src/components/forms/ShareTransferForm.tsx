@@ -14,7 +14,7 @@ interface ShareTransferFormProps {
   onClose: () => void;
   onTransferSuccess: () => void; 
   directors: any[];
-  companyId: string; // Passed from the database selection
+  companyId: string | null; // Passed from the database selection
 }
 
 export function ShareTransferForm({ open, onClose, onTransferSuccess, directors, companyId }: ShareTransferFormProps) {
@@ -57,6 +57,14 @@ export function ShareTransferForm({ open, onClose, onTransferSuccess, directors,
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validation.isValid) return;
+    if (!companyId) {
+      toast({
+        title: "No Company Selected",
+        description: "Select or create a company first.",
+        variant: "destructive"
+      });
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -68,6 +76,8 @@ export function ShareTransferForm({ open, onClose, onTransferSuccess, directors,
         amount: parseFloat(formData.amount),
         notes: formData.notes,
         date: formData.date
+      }, {
+        headers: { "x-company-id": companyId }
       });
 
       if (response.data.success) {

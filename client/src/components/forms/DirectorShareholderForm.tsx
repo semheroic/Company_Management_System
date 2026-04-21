@@ -13,6 +13,7 @@ interface DirectorShareholderFormProps {
   open: boolean;
   onClose: () => void;
   onAdd: (data: any) => void;
+  companyId: string | null;
   editData?: any;
   currentDirectors?: any[];
   authorizedShares?: number;
@@ -22,13 +23,13 @@ export function DirectorShareholderForm({
   open, 
   onClose, 
   onAdd, 
+  companyId,
   editData, 
   currentDirectors = [],
   authorizedShares = 10000 
 }: DirectorShareholderFormProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const companyId = localStorage.getItem('selectedCompanyId') || "1";
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -103,6 +104,10 @@ export function DirectorShareholderForm({
       toast({ title: "Share Allocation Error", description: `Total shares would exceed limit`, variant: "destructive" });
       return;
     }
+    if (!companyId) {
+      toast({ title: "No Company Selected", description: "Select or create a company first.", variant: "destructive" });
+      return;
+    }
 
     setIsSubmitting(true);
 
@@ -128,11 +133,11 @@ export function DirectorShareholderForm({
       
       if (editData && editData.id) {
         response = await axios.put(`${url}/${editData.id}`, data, {
-          headers: { "Content-Type": "multipart/form-data" }
+          headers: { "Content-Type": "multipart/form-data", "x-company-id": companyId }
         });
       } else {
         response = await axios.post(url, data, {
-          headers: { "Content-Type": "multipart/form-data" }
+          headers: { "Content-Type": "multipart/form-data", "x-company-id": companyId }
         });
       }
 

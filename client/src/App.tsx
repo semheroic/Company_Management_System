@@ -64,7 +64,7 @@ function App() {
             <Route path="/business-plan" element={<BusinessPlan />} />
             <Route path="/complaint-risk-management" element={<ComplaintRiskManagement />} />
             <Route path="/registers" element={<Registers />} />
-            <Route path="/user-management" element={<UserManagement />} />
+            <Route path="/user-management" element={<UserManagement/>} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/help" element={<Help />} />
             <Route path="*" element={<NotFound />} />
