@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +26,18 @@ export default function ComplaintRiskForm({ open, onOpenChange, issue, onSubmit 
     status: issue?.status || "Open",
     deadline: issue?.deadline || ""
   });
+
+  useEffect(() => {
+    setFormData({
+      title: issue?.title || "",
+      category: issue?.category || "",
+      description: issue?.description || "",
+      assignedTo: issue?.assignedTo || "",
+      priority: issue?.priority || "",
+      status: issue?.status || "Open",
+      deadline: issue?.deadline || ""
+    });
+  }, [issue, open]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

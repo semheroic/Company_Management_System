@@ -30,6 +30,9 @@ import Help from './pages/Help';
 import NotFound from './pages/NotFound';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import CapitalEquity from "./pages/CapitalEquity";
+import Login from "./pages/Login";
+import SignUp from "./pages/SignUp";
+import { ProtectedRoute, PublicOnlyRoute } from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -41,32 +44,36 @@ function App() {
           <Toaster />
           <DataSyncNotification />
           <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/company-profile" element={<CompanyProfile />} />
-            <Route path="/directors-shareholders" element={<DirectorsShareholders />} />
-            <Route path="/capital-equity" element={<CapitalEquity />} />
-            <Route path="/employee-records" element={<EmployeeRecords />} />
-            <Route path="/payroll-hr" element={<PayrollHR />} />
-            <Route path="/invoices-receipts" element={<InvoicesReceipts />} />
-            <Route path="/accounting-books" element={<AccountingBooks />} />
-            <Route path="/general-ledger" element={<GeneralLedger />} />
-            <Route path="/trial-balance" element={<TrialBalance />} />
-            <Route path="/fixed-assets" element={<FixedAssets />} />
-            <Route path="/client-supplier-registers" element={<ClientSupplierRegisters />} />
-            <Route path="/contracts-agreements" element={<ContractsAgreements />} />
-            <Route path="/meeting-minutes" element={<MeetingMinutes />} />
-            <Route path="/document-vault" element={<DocumentVault />} />
-            <Route path="/tax-returns" element={<TaxReturns />} />
-            <Route path="/compliance-calendar" element={<ComplianceCalendar />} />
-            <Route path="/compliance-alerts" element={<ComplianceAlerts />} />
-            <Route path="/reports-audit" element={<ReportsAudit />} />
-            <Route path="/internal-audit-reports" element={<InternalAuditReports />} />
-            <Route path="/business-plan" element={<BusinessPlan />} />
-            <Route path="/complaint-risk-management" element={<ComplaintRiskManagement />} />
-            <Route path="/registers" element={<Registers />} />
-            <Route path="/user-management" element={<UserManagement/>} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/help" element={<Help />} />
+            <Route path="/login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
+            <Route path="/signup" element={<PublicOnlyRoute><SignUp /></PublicOnlyRoute>} />
+            <Route element={<ProtectedRoute />}>
+              <Route path="/" element={<Index />} />
+              <Route path="/company-profile" element={<CompanyProfile />} />
+              <Route path="/directors-shareholders" element={<DirectorsShareholders />} />
+              <Route path="/capital-equity" element={<CapitalEquity />} />
+              <Route path="/employee-records" element={<EmployeeRecords />} />
+              <Route path="/payroll-hr" element={<PayrollHR />} />
+              <Route path="/invoices-receipts" element={<InvoicesReceipts />} />
+              <Route path="/accounting-books" element={<AccountingBooks />} />
+              <Route path="/general-ledger" element={<GeneralLedger />} />
+              <Route path="/trial-balance" element={<TrialBalance />} />
+              <Route path="/fixed-assets" element={<FixedAssets />} />
+              <Route path="/client-supplier-registers" element={<ClientSupplierRegisters />} />
+              <Route path="/contracts-agreements" element={<ContractsAgreements />} />
+              <Route path="/meeting-minutes" element={<MeetingMinutes />} />
+              <Route path="/document-vault" element={<DocumentVault />} />
+              <Route path="/tax-returns" element={<TaxReturns />} />
+              <Route path="/compliance-calendar" element={<ComplianceCalendar />} />
+              <Route path="/compliance-alerts" element={<ComplianceAlerts />} />
+              <Route path="/reports-audit" element={<ReportsAudit />} />
+              <Route path="/internal-audit-reports" element={<InternalAuditReports />} />
+              <Route path="/business-plan" element={<BusinessPlan />} />
+              <Route path="/complaint-risk-management" element={<ComplaintRiskManagement />} />
+              <Route path="/registers" element={<Registers />} />
+              <Route path="/user-management" element={<UserManagement/>} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/help" element={<Help />} />
+            </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
         </div>

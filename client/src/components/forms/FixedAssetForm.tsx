@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,60 +12,88 @@ import UniversalTransactionService from "@/services/universalTransactionService"
 interface FixedAssetFormProps {
   open: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: () => void | Promise<void>;
 }
 
 export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps) {
   const { toast } = useToast();
   const [formData, setFormData] = useState({
-    name: '',
-    category: '',
-    acquisitionDate: '',
-    acquisitionCost: '',
-    depreciationMethod: 'straight_line' as const,
-    usefulLifeYears: '',
-    residualValue: '',
-    location: '',
-    supplier: '',
-    status: 'active' as const,
-    // UTS integration fields
+    name: "",
+    category: "",
+    acquisitionDate: "",
+    acquisitionCost: "",
+    depreciationMethod: "straight_line" as const,
+    usefulLifeYears: "",
+    residualValue: "",
+    location: "",
+    supplier: "",
+    status: "active" as const,
     useUTS: true,
-    paymentMethod: 'bank' as 'cash' | 'bank',
-    includeVAT: true
+    paymentMethod: "bank" as "cash" | "bank",
+    includeVAT: true,
   });
-
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const categories = [
-    'Computer Equipment',
-    'Vehicle',
-    'Furniture',
-    'Machinery',
-    'Building',
-    'Land',
-    'Office Equipment',
-    'Tools'
+    "Computer Equipment",
+    "Vehicle",
+    "Furniture",
+    "Machinery",
+    "Building",
+    "Land",
+    "Office Equipment",
+    "Tools",
   ];
 
   const locations = [
-    'Main Office',
-    'IT Department',
-    'Administration',
-    'Warehouse',
-    'Production Floor',
-    'Reception',
-    'Conference Room'
+    "Main Office",
+    "IT Department",
+    "Administration",
+    "Warehouse",
+    "Production Floor",
+    "Reception",
+    "Conference Room",
   ];
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!formData.name || !formData.category || !formData.acquisitionDate || 
-        !formData.acquisitionCost || !formData.usefulLifeYears) {
+  const handleInputChange = (field: string, value: string | boolean) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const resetForm = () => {
+    setFormData({
+      name: "",
+      category: "",
+      acquisitionDate: "",
+      acquisitionCost: "",
+      depreciationMethod: "straight_line",
+      usefulLifeYears: "",
+      residualValue: "",
+      location: "",
+      supplier: "",
+      status: "active",
+      useUTS: true,
+      paymentMethod: "bank",
+      includeVAT: true,
+    });
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (
+      !formData.name ||
+      !formData.category ||
+      !formData.acquisitionDate ||
+      !formData.acquisitionCost ||
+      !formData.usefulLifeYears
+    ) {
       toast({
         title: "Validation Error",
-        description: "Please fill in all required fields",
-        variant: "destructive"
+        description: "Please fill in all required fields.",
+        variant: "destructive",
       });
       return;
     }
@@ -74,125 +101,100 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
     setIsSubmitting(true);
 
     try {
-      const acquisitionCost = parseFloat(formData.acquisitionCost);
+      const acquisitionCost = Number(formData.acquisitionCost);
       const totalAmount = formData.includeVAT ? acquisitionCost * 1.18 : acquisitionCost;
+      const assetPayload = {
+        name: formData.name,
+        category: formData.category,
+        acquisitionDate: formData.acquisitionDate,
+        acquisitionCost,
+        depreciationMethod: formData.depreciationMethod,
+        usefulLifeYears: Number(formData.usefulLifeYears),
+        residualValue: Number(formData.residualValue || 0),
+        location: formData.location,
+        supplier: formData.supplier,
+        status: formData.status,
+      };
 
       if (formData.useUTS) {
-        // Use Universal Transaction System for integrated accounting
         UniversalTransactionService.createTransaction({
-          type: 'asset_acquisition',
+          type: "asset_acquisition",
           amount: totalAmount,
           payment_method: formData.paymentMethod,
           description: `Asset Acquisition - ${formData.name}`,
           date: formData.acquisitionDate,
           supplier: formData.supplier,
-          status: 'confirmed',
-          company_id: localStorage.getItem('selectedCompanyId') || 'comp-001',
+          status: "confirmed",
+          company_id: localStorage.getItem("selectedCompanyId") || "comp-001",
           asset_details: {
             name: formData.name,
             category: formData.category,
             location: formData.location,
-            useful_life_years: parseInt(formData.usefulLifeYears),
-            residual_value: parseFloat(formData.residualValue) || 0,
-            depreciation_method: formData.depreciationMethod
-          }
-        });
-
-        toast({
-          title: "Success",
-          description: "Asset added and accounting entries posted automatically"
-        });
-      } else {
-        // Traditional method - just add to asset register
-        const assetData = {
-          name: formData.name,
-          category: formData.category,
-          acquisitionDate: formData.acquisitionDate,
-          acquisitionCost: acquisitionCost,
-          depreciationMethod: formData.depreciationMethod,
-          usefulLifeYears: parseInt(formData.usefulLifeYears),
-          residualValue: parseFloat(formData.residualValue) || 0,
-          location: formData.location,
-          supplier: formData.supplier,
-          status: formData.status
-        };
-
-        FixedAssetService.addAsset(assetData);
-
-        toast({
-          title: "Success",
-          description: "Fixed asset has been added successfully"
+            useful_life_years: Number(formData.usefulLifeYears),
+            residual_value: Number(formData.residualValue || 0),
+            depreciation_method: formData.depreciationMethod,
+          },
         });
       }
 
-      // Reset form
-      setFormData({
-        name: '',
-        category: '',
-        acquisitionDate: '',
-        acquisitionCost: '',
-        depreciationMethod: 'straight_line',
-        usefulLifeYears: '',
-        residualValue: '',
-        location: '',
-        supplier: '',
-        status: 'active',
-        useUTS: true,
-        paymentMethod: 'bank',
-        includeVAT: true
+      await FixedAssetService.addAsset(assetPayload);
+
+      toast({
+        title: "Success",
+        description: formData.useUTS
+          ? "Asset saved and accounting entries posted automatically."
+          : "Fixed asset has been added successfully.",
       });
 
-      onSuccess?.();
+      resetForm();
+      if (onSuccess) {
+        await onSuccess();
+      }
       onClose();
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Fixed asset creation failed:", error);
       toast({
-        title: "Error",
-        description: "Failed to add fixed asset. Please try again.",
-        variant: "destructive"
+        title: "Save Failed",
+        description: error?.response?.data?.error || "Failed to save the fixed asset.",
+        variant: "destructive",
       });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleInputChange = (field: string, value: string | boolean) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add New Fixed Asset</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* UTS Integration Section */}
-          <div className="bg-blue-50 p-4 rounded-lg space-y-3">
+          <div className="space-y-3 rounded-lg bg-blue-50 p-4">
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="useUTS"
                 checked={formData.useUTS}
-                onCheckedChange={(checked) => handleInputChange('useUTS', checked as boolean)}
+                onCheckedChange={(checked) => handleInputChange("useUTS", checked as boolean)}
               />
               <Label htmlFor="useUTS" className="text-sm font-medium">
-                Use Universal Transaction System (Recommended)
+                Use Universal Transaction System
               </Label>
             </div>
             <p className="text-xs text-blue-700">
-              Automatically posts journal entries, updates ledger, and maintains full audit trail
+              This saves the fixed asset in the backend register and optionally posts the accounting entry.
             </p>
-            
+
             {formData.useUTS && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label htmlFor="paymentMethod" className="text-sm">Payment Method</Label>
-                  <Select 
-                    value={formData.paymentMethod} 
-                    onValueChange={(value) => handleInputChange('paymentMethod', value)}
+                  <Label htmlFor="paymentMethod" className="text-sm">
+                    Payment Method
+                  </Label>
+                  <Select
+                    value={formData.paymentMethod}
+                    onValueChange={(value) => handleInputChange("paymentMethod", value)}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -207,21 +209,23 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
                   <Checkbox
                     id="includeVAT"
                     checked={formData.includeVAT}
-                    onCheckedChange={(checked) => handleInputChange('includeVAT', checked as boolean)}
+                    onCheckedChange={(checked) => handleInputChange("includeVAT", checked as boolean)}
                   />
-                  <Label htmlFor="includeVAT" className="text-sm">Include VAT (18%)</Label>
+                  <Label htmlFor="includeVAT" className="text-sm">
+                    Include VAT (18%)
+                  </Label>
                 </div>
               </div>
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="name">Asset Name *</Label>
               <Input
                 id="name"
                 value={formData.name}
-                onChange={(e) => handleInputChange('name', e.target.value)}
+                onChange={(event) => handleInputChange("name", event.target.value)}
                 placeholder="e.g. Dell Laptop - IT001"
                 required
               />
@@ -229,7 +233,7 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
 
             <div className="space-y-2">
               <Label htmlFor="category">Category *</Label>
-              <Select value={formData.category} onValueChange={(value) => handleInputChange('category', value)}>
+              <Select value={formData.category} onValueChange={(value) => handleInputChange("category", value)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
@@ -249,20 +253,20 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
                 id="acquisitionDate"
                 type="date"
                 value={formData.acquisitionDate}
-                onChange={(e) => handleInputChange('acquisitionDate', e.target.value)}
+                onChange={(event) => handleInputChange("acquisitionDate", event.target.value)}
                 required
               />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="acquisitionCost">
-                {formData.useUTS && formData.includeVAT ? 'Net Cost (RWF) *' : 'Acquisition Cost (RWF) *'}
+                {formData.useUTS && formData.includeVAT ? "Net Cost (RWF) *" : "Acquisition Cost (RWF) *"}
               </Label>
               <Input
                 id="acquisitionCost"
                 type="number"
                 value={formData.acquisitionCost}
-                onChange={(e) => handleInputChange('acquisitionCost', e.target.value)}
+                onChange={(event) => handleInputChange("acquisitionCost", event.target.value)}
                 placeholder="0"
                 min="0"
                 step="1"
@@ -270,7 +274,7 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
               />
               {formData.useUTS && formData.includeVAT && formData.acquisitionCost && (
                 <p className="text-xs text-gray-600">
-                  Total with VAT: {FixedAssetService.formatCurrency(parseFloat(formData.acquisitionCost) * 1.18)}
+                  Total with VAT: {FixedAssetService.formatCurrency(Number(formData.acquisitionCost) * 1.18)}
                 </p>
               )}
             </div>
@@ -281,7 +285,7 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
                 id="usefulLifeYears"
                 type="number"
                 value={formData.usefulLifeYears}
-                onChange={(e) => handleInputChange('usefulLifeYears', e.target.value)}
+                onChange={(event) => handleInputChange("usefulLifeYears", event.target.value)}
                 placeholder="5"
                 min="1"
                 max="50"
@@ -295,7 +299,7 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
                 id="residualValue"
                 type="number"
                 value={formData.residualValue}
-                onChange={(e) => handleInputChange('residualValue', e.target.value)}
+                onChange={(event) => handleInputChange("residualValue", event.target.value)}
                 placeholder="0"
                 min="0"
                 step="1"
@@ -304,7 +308,7 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
 
             <div className="space-y-2">
               <Label htmlFor="location">Location</Label>
-              <Select value={formData.location} onValueChange={(value) => handleInputChange('location', value)}>
+              <Select value={formData.location} onValueChange={(value) => handleInputChange("location", value)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select location" />
                 </SelectTrigger>
@@ -323,7 +327,7 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
               <Input
                 id="supplier"
                 value={formData.supplier}
-                onChange={(e) => handleInputChange('supplier', e.target.value)}
+                onChange={(event) => handleInputChange("supplier", event.target.value)}
                 placeholder="e.g. Dell Rwanda"
               />
             </div>
@@ -331,26 +335,28 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
 
           <div className="space-y-2">
             <Label htmlFor="depreciationMethod">Depreciation Method</Label>
-            <Select 
-              value={formData.depreciationMethod} 
-              onValueChange={(value) => handleInputChange('depreciationMethod', value)}
+            <Select
+              value={formData.depreciationMethod}
+              onValueChange={(value) => handleInputChange("depreciationMethod", value)}
             >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="straight_line">Straight Line</SelectItem>
-                <SelectItem value="reducing_balance" disabled>Reducing Balance (Coming Soon)</SelectItem>
+                <SelectItem value="reducing_balance" disabled>
+                  Reducing Balance (Coming Soon)
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="flex justify-end space-x-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Adding..." : "Add Asset"}
+              {isSubmitting ? "Saving..." : "Add Asset"}
             </Button>
           </div>
         </form>

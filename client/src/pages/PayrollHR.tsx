@@ -1,140 +1,164 @@
-import { ArrowLeft, Plus, UserCheck, Upload, Download, Eye, Filter, Calendar, Users, AlertTriangle, CheckCircle, Calculator } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Calculator,
+  CheckCircle,
+  Download,
+  Eye,
+  Filter,
+  Loader2,
+  Plus,
+  Upload,
+  UserCheck,
+  Users,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
 import { EmployeeForm } from "@/components/forms/EmployeeForm";
 import { PayrollForm } from "@/components/forms/PayrollForm";
-import PayrollService, { PayrollRecord, Employee } from "@/services/payrollService";
 import { useToast } from "@/hooks/use-toast";
+import EmployeeRecordsService, {
+  EmployeeRecord,
+} from "@/services/employeeRecordsService";
+import PayrollRegisterService, {
+  PayrollRecord,
+  PayrollSummary,
+} from "@/services/payrollRegisterService";
+
+const EMPTY_SUMMARY: PayrollSummary = {
+  totalEmployees: 0,
+  totalGrossPay: 0,
+  totalPaye: 0,
+  totalRssbEmployee: 0,
+  totalRssbEmployer: 0,
+  totalNetPay: 0,
+  paidCount: 0,
+  unpaidCount: 0,
+};
 
 export default function PayrollHR() {
   const { toast } = useToast();
   const [showEmployeeForm, setShowEmployeeForm] = useState(false);
   const [showPayrollForm, setShowPayrollForm] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
   const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [payrollSummary, setPayrollSummary] = useState<PayrollSummary>(EMPTY_SUMMARY);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Load data on component mount and when dependencies change
+  const loadPageData = async () => {
+    setIsLoading(true);
+    try {
+      const [employeeResponse, payrollResponse] = await Promise.all([
+        EmployeeRecordsService.getAll(),
+        PayrollRegisterService.getByMonth(selectedMonth),
+      ]);
+
+      setEmployees(employeeResponse.records);
+      setPayrollRecords(payrollResponse.records);
+      setPayrollSummary(payrollResponse.summary);
+    } catch (error) {
+      console.error("Failed to load payroll data:", error);
+      toast({
+        title: "Load Failed",
+        description: "Could not load payroll data from the backend.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    loadEmployees();
-    loadPayrollData();
+    void loadPageData();
   }, [selectedMonth]);
 
-  const loadEmployees = () => {
-    const allEmployees = PayrollService.getAllEmployees();
-    setEmployees(allEmployees);
-  };
-
-  const loadPayrollData = () => {
-    const records = PayrollService.getPayrollByMonth(selectedMonth);
-    setPayrollRecords(records);
-  };
-
-  const handleGeneratePayroll = () => {
-    setShowPayrollForm(true);
-  };
-
-  const handlePayrollSuccess = () => {
-    loadPayrollData();
-    toast({
-      title: "Success",
-      description: "Payroll has been generated and saved successfully"
-    });
-  };
-
-  const handleMarkAsPaid = (payrollId: number) => {
-    const success = PayrollService.markAsPaid(payrollId);
-    if (success) {
-      loadPayrollData();
+  const handleMarkAsPaid = async (payrollId: number) => {
+    try {
+      await PayrollRegisterService.markAsPaid(payrollId);
+      await loadPageData();
       toast({
         title: "Payment Marked",
-        description: "Payroll record has been marked as paid"
+        description: "Payroll record has been marked as paid.",
+      });
+    } catch (error) {
+      console.error("Failed to mark payroll record as paid:", error);
+      toast({
+        title: "Update Failed",
+        description: "Could not update the payroll record.",
+        variant: "destructive",
       });
     }
   };
 
-  const handleDownloadPayslip = (payrollId: number) => {
-    const payslip = PayrollService.generatePayslip(payrollId);
-    if (payslip) {
-      // In a real system, this would generate a proper PDF
-      const payslipData = {
-        employee: payslip.employee.fullName,
-        month: payslip.month,
-        grossSalary: payslip.grossSalary,
-        paye: payslip.paye,
-        rssb: payslip.rssbEmployee,
-        netSalary: payslip.netSalary
-      };
-      
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payslipData, null, 2));
-      const downloadAnchorNode = document.createElement('a');
-      downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute("download", `payslip_${payslip.employee.fullName}_${payslip.month}.json`);
-      document.body.appendChild(downloadAnchorNode);
-      downloadAnchorNode.click();
-      downloadAnchorNode.remove();
-
-      toast({
-        title: "Payslip Downloaded",
-        description: "Payslip has been downloaded successfully"
-      });
-    }
+  const handleDownloadPayslip = (record: PayrollRecord) => {
+    const dataStr =
+      "data:text/json;charset=utf-8," +
+      encodeURIComponent(JSON.stringify(record, null, 2));
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", dataStr);
+    anchor.setAttribute(
+      "download",
+      `payslip_${record.employee?.fullName || record.employeeId}_${record.month}.json`,
+    );
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
   };
 
   const handleExportPayroll = () => {
-    if (payrollRecords.length === 0) {
-      toast({
-        title: "No Data",
-        description: "No payroll data to export for the selected month",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    const csvData = PayrollService.exportPayrollToCSV(selectedMonth);
-    const blob = new Blob([csvData], { type: 'text/csv' });
+    const csvData = PayrollRegisterService.exportToCSV(payrollRecords);
+    const blob = new Blob([csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `payroll_${selectedMonth}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `payroll_${selectedMonth}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
     window.URL.revokeObjectURL(url);
-
-    toast({
-      title: "Export Complete",
-      description: "Payroll data has been exported to CSV"
-    });
   };
 
-  // Filter employees based on search term
-  const filteredEmployees = employees.filter(emp => 
-    emp.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    emp.position.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    emp.department.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredEmployees = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return employees.filter((employee) => {
+      return (
+        query === "" ||
+        employee.fullName.toLowerCase().includes(query) ||
+        employee.position.toLowerCase().includes(query) ||
+        employee.department.toLowerCase().includes(query)
+      );
+    });
+  }, [employees, searchTerm]);
 
-  // Calculate summary statistics
-  const activeEmployees = employees.filter(emp => emp.status === 'active').length;
-  const payrollSummary = PayrollService.getPayrollSummary(selectedMonth);
-  const alerts = PayrollService.getComplianceAlerts();
+  const activeEmployees = employees.filter((employee) => employee.status === "active").length;
+  const alerts = PayrollRegisterService.getComplianceAlerts(payrollRecords, selectedMonth);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+          <p className="text-sm text-gray-600">Loading payroll and HR data...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link to="/">
               <Button variant="ghost" size="sm">
-                <ArrowLeft className="w-4 h-4 mr-2" />
+                <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to Dashboard
               </Button>
             </Link>
@@ -142,51 +166,47 @@ export default function PayrollHR() {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setShowEmployeeForm(true)}>
-              <Users className="w-4 h-4 mr-2" />
+              <Users className="mr-2 h-4 w-4" />
               Add Employee
             </Button>
-            <Button variant="outline" onClick={handleExportPayroll}>
-              <Upload className="w-4 h-4 mr-2" />
+            <Button variant="outline" onClick={handleExportPayroll} disabled={!payrollRecords.length}>
+              <Upload className="mr-2 h-4 w-4" />
               Export Payroll
             </Button>
-            <Button onClick={handleGeneratePayroll}>
-              <Plus className="w-4 h-4 mr-2" />
+            <Button onClick={() => setShowPayrollForm(true)}>
+              <Plus className="mr-2 h-4 w-4" />
               Generate Payroll
             </Button>
           </div>
         </div>
 
-        {/* Compliance Alerts */}
         {alerts.length > 0 && (
           <div className="mb-6">
             <Card className="border-orange-200 bg-orange-50">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-orange-800">
-                  <AlertTriangle className="w-5 h-5" />
+                  <AlertTriangle className="h-5 w-5" />
                   Compliance Alerts
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {alerts.map((alert, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-white rounded border">
-                      <div>
-                        <span className="font-medium">{alert.message}</span>
-                        <span className="text-sm text-gray-600 ml-2">Due: {alert.dueDate}</span>
-                      </div>
-                      <Badge variant={alert.priority === 'high' ? 'destructive' : 'secondary'}>
-                        {alert.priority}
-                      </Badge>
+              <CardContent className="space-y-2">
+                {alerts.map((alert, index) => (
+                  <div key={`${alert.type}-${index}`} className="flex items-center justify-between rounded border bg-white p-3">
+                    <div>
+                      <span className="font-medium">{alert.message}</span>
+                      <span className="ml-2 text-sm text-gray-600">Due: {alert.dueDate}</span>
                     </div>
-                  ))}
-                </div>
+                    <Badge variant={alert.priority === "high" ? "destructive" : "secondary"}>
+                      {alert.priority}
+                    </Badge>
+                  </div>
+                ))}
               </CardContent>
             </Card>
           </div>
         )}
 
-        {/* Summary Cards */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold">{activeEmployees}</div>
@@ -196,7 +216,7 @@ export default function PayrollHR() {
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold text-green-600">
-                {payrollSummary ? PayrollService.formatCurrency(payrollSummary.totalGrossPay) : 'RWF 0'}
+                {PayrollRegisterService.formatCurrency(payrollSummary.totalGrossPay)}
               </div>
               <div className="text-sm text-gray-600">Monthly Gross Pay</div>
             </CardContent>
@@ -204,7 +224,7 @@ export default function PayrollHR() {
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold text-blue-600">
-                {payrollSummary ? PayrollService.formatCurrency(payrollSummary.totalPaye) : 'RWF 0'}
+                {PayrollRegisterService.formatCurrency(payrollSummary.totalPaye)}
               </div>
               <div className="text-sm text-gray-600">Monthly PAYE</div>
             </CardContent>
@@ -212,36 +232,37 @@ export default function PayrollHR() {
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold text-purple-600">
-                {payrollSummary ? PayrollService.formatCurrency(payrollSummary.totalRssbEmployee + payrollSummary.totalRssbEmployer) : 'RWF 0'}
+                {PayrollRegisterService.formatCurrency(
+                  payrollSummary.totalRssbEmployee + payrollSummary.totalRssbEmployer,
+                )}
               </div>
               <div className="text-sm text-gray-600">Monthly RSSB</div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Payroll Data */}
         <Card className="mb-6">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
-                <UserCheck className="w-5 h-5" />
+                <UserCheck className="h-5 w-5" />
                 Payroll Records
               </CardTitle>
               <div className="flex items-center gap-2">
                 <Input
                   type="month"
                   value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  onChange={(event) => setSelectedMonth(event.target.value)}
                   className="max-w-xs"
                 />
-                <Input 
-                  placeholder="Search employees..." 
+                <Input
+                  placeholder="Search employees..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="max-w-xs" 
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  className="max-w-xs"
                 />
                 <Button variant="outline" size="sm">
-                  <Filter className="w-4 h-4" />
+                  <Filter className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -266,32 +287,30 @@ export default function PayrollHR() {
                     <TableRow key={record.id}>
                       <TableCell className="font-medium">
                         <div>
-                          <div>{record.employee.fullName}</div>
-                          <div className="text-sm text-gray-600">{record.employee.email}</div>
+                          <div>{record.employee?.fullName || "Employee"}</div>
+                          <div className="text-sm text-gray-600">{record.employee?.email || "No email"}</div>
                         </div>
                       </TableCell>
-                      <TableCell>{record.employee.position}</TableCell>
-                      <TableCell className="text-right">{PayrollService.formatCurrency(record.grossSalary)}</TableCell>
-                      <TableCell className="text-right">{PayrollService.formatCurrency(record.paye)}</TableCell>
-                      <TableCell className="text-right">{PayrollService.formatCurrency(record.rssbEmployee)}</TableCell>
-                      <TableCell className="text-right font-semibold">{PayrollService.formatCurrency(record.netSalary)}</TableCell>
+                      <TableCell>{record.employee?.position || "-"}</TableCell>
+                      <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.grossSalary)}</TableCell>
+                      <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.paye)}</TableCell>
+                      <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.rssbEmployee)}</TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {PayrollRegisterService.formatCurrency(record.netSalary)}
+                      </TableCell>
                       <TableCell>
-                        <Badge className={record.paid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
-                          {record.paid ? 'Paid' : 'Unpaid'}
+                        <Badge className={record.paid ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>
+                          {record.paid ? "Paid" : "Unpaid"}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleDownloadPayslip(record.id)}>
-                            <Download className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" onClick={() => handleDownloadPayslip(record)}>
+                            <Download className="h-4 w-4" />
                           </Button>
                           {!record.paid && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => handleMarkAsPaid(record.id)}
-                            >
-                              <CheckCircle className="w-4 h-4" />
+                            <Button variant="ghost" size="sm" onClick={() => void handleMarkAsPaid(record.id)}>
+                              <CheckCircle className="h-4 w-4" />
                             </Button>
                           )}
                         </div>
@@ -301,10 +320,10 @@ export default function PayrollHR() {
                 </TableBody>
               </Table>
             ) : (
-              <div className="text-center py-8">
-                <div className="text-gray-500 mb-4">No payroll data for {selectedMonth}</div>
-                <Button onClick={handleGeneratePayroll}>
-                  <Calculator className="w-4 h-4 mr-2" />
+              <div className="py-8 text-center">
+                <div className="mb-4 text-gray-500">No payroll data for {selectedMonth}</div>
+                <Button onClick={() => setShowPayrollForm(true)}>
+                  <Calculator className="mr-2 h-4 w-4" />
                   Generate Payroll for {selectedMonth}
                 </Button>
               </div>
@@ -312,11 +331,10 @@ export default function PayrollHR() {
           </CardContent>
         </Card>
 
-        {/* Employee List */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Users className="w-5 h-5" />
+              <Users className="h-5 w-5" />
               Employee Directory
             </CardTitle>
           </CardHeader>
@@ -334,42 +352,66 @@ export default function PayrollHR() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredEmployees.map((employee) => (
-                  <TableRow key={employee.id}>
-                    <TableCell className="font-medium">
-                      <div>
-                        <div>{employee.fullName}</div>
-                        <div className="text-sm text-gray-600">{employee.email}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell>{employee.position}</TableCell>
-                    <TableCell>{employee.department}</TableCell>
-                    <TableCell>{employee.startDate}</TableCell>
-                    <TableCell className="text-right">{PayrollService.formatCurrency(employee.grossSalary)}</TableCell>
-                    <TableCell>
-                      <Badge className={employee.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}>
-                        {employee.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="sm">
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                      </div>
+                {filteredEmployees.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-8 text-center text-gray-500">
+                      No employees found.
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  filteredEmployees.map((employee) => (
+                    <TableRow key={employee.id}>
+                      <TableCell className="font-medium">
+                        <div>
+                          <div>{employee.fullName}</div>
+                          <div className="text-sm text-gray-600">{employee.email || "No email"}</div>
+                        </div>
+                      </TableCell>
+                      <TableCell>{employee.position}</TableCell>
+                      <TableCell>{employee.department}</TableCell>
+                      <TableCell>{employee.startDate}</TableCell>
+                      <TableCell className="text-right">
+                        {PayrollRegisterService.formatCurrency(employee.grossSalary)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={employee.status === "active" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-700"}>
+                          {employee.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              toast({
+                                title: employee.fullName,
+                                description: `${employee.position} | ${employee.department}`,
+                              })
+                            }
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
 
-        <EmployeeForm open={showEmployeeForm} onClose={() => setShowEmployeeForm(false)} />
-        <PayrollForm 
-          open={showPayrollForm} 
+        <EmployeeForm
+          open={showEmployeeForm}
+          onClose={() => setShowEmployeeForm(false)}
+          onSuccess={() => void loadPageData()}
+        />
+
+        <PayrollForm
+          open={showPayrollForm}
           onClose={() => setShowPayrollForm(false)}
-          onSuccess={handlePayrollSuccess}
+          onSuccess={() => void loadPageData()}
         />
       </div>
     </div>

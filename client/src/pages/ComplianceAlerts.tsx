@@ -1,63 +1,123 @@
-import { useState } from "react";
-import { ArrowLeft, Bell, AlertTriangle, CheckCircle, XCircle, Filter, Plus, Clock } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Bell,
+  CheckCircle,
+  Clock,
+  Filter,
+  Plus,
+  XCircle,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Link } from "react-router-dom";
-import { useToast } from "@/hooks/use-toast";
-import AlertService, { Alert } from "@/services/alertService";
 import ManualAlertForm from "@/components/forms/ManualAlertForm";
+import { useToast } from "@/hooks/use-toast";
+import ComplianceAlertService, {
+  ComplianceAlertRecord,
+  ComplianceAlertSummary,
+} from "@/services/complianceAlertService";
+
+const EMPTY_SUMMARY: ComplianceAlertSummary = {
+  total: 0,
+  active: 0,
+  acknowledged: 0,
+  resolved: 0,
+  highPriority: 0,
+};
 
 export default function ComplianceAlerts() {
   const { toast } = useToast();
-  const [alerts, setAlerts] = useState<Alert[]>(AlertService.getAllAlerts());
-  const [filteredAlerts, setFilteredAlerts] = useState<Alert[]>(alerts);
+  const [alerts, setAlerts] = useState<ComplianceAlertRecord[]>([]);
+  const [summary, setSummary] = useState<ComplianceAlertSummary>(EMPTY_SUMMARY);
   const [isManualAlertOpen, setIsManualAlertOpen] = useState(false);
   const [filters, setFilters] = useState({
-    type: 'all',
-    severity: 'all',
-    status: 'all',
-    role: 'admin' // Current user role
+    type: "all",
+    severity: "all",
+    status: "all",
+    role: "admin",
   });
 
-  const stats = AlertService.getAlertStats();
+  const loadAlerts = async () => {
+    try {
+      const response = await ComplianceAlertService.getAll();
+      setAlerts(response.records);
+      setSummary(response.summary);
+    } catch (error) {
+      console.error("Failed to load compliance alerts:", error);
+      toast({
+        title: "Load Failed",
+        description: "Could not load compliance alerts from the backend.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  useEffect(() => {
+    void loadAlerts();
+  }, []);
+
+  const filteredAlerts = useMemo(() => {
+    return alerts.filter((alert) => {
+      const matchesRole =
+        filters.role === "all" ||
+        alert.forRole.includes(filters.role) ||
+        alert.forRole.includes("admin");
+      const matchesType = filters.type === "all" || alert.type === filters.type;
+      const matchesSeverity = filters.severity === "all" || alert.severity === filters.severity;
+      const matchesStatus = filters.status === "all" || alert.status === filters.status;
+
+      return matchesRole && matchesType && matchesSeverity && matchesStatus;
+    });
+  }, [alerts, filters]);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case "high": return "bg-red-100 text-red-800";
-      case "medium": return "bg-yellow-100 text-yellow-800";
-      case "low": return "bg-blue-100 text-blue-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "high":
+        return "bg-red-100 text-red-800";
+      case "medium":
+        return "bg-yellow-100 text-yellow-800";
+      case "low":
+        return "bg-blue-100 text-blue-800";
+      default:
+        return "bg-gray-100 text-gray-800";
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "active": return "bg-red-100 text-red-800";
-      case "acknowledged": return "bg-yellow-100 text-yellow-800";
-      case "resolved": return "bg-green-100 text-green-800";
-      case "snoozed": return "bg-purple-100 text-purple-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "active":
+        return "bg-red-100 text-red-800";
+      case "acknowledged":
+        return "bg-yellow-100 text-yellow-800";
+      case "resolved":
+        return "bg-green-100 text-green-800";
+      case "snoozed":
+        return "bg-purple-100 text-purple-800";
+      default:
+        return "bg-gray-100 text-gray-800";
     }
   };
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case "tax": return <AlertTriangle className="w-4 h-4" />;
-      case "hr": return <XCircle className="w-4 h-4" />;
-      case "compliance": return <CheckCircle className="w-4 h-4" />;
-      case "financial": return <Bell className="w-4 h-4" />;
-      case "license": return <Bell className="w-4 h-4" />;
-      case "custom": return <Bell className="w-4 h-4" />;
-      default: return <Bell className="w-4 h-4" />;
+      case "tax":
+        return <AlertTriangle className="h-4 w-4" />;
+      case "hr":
+        return <XCircle className="h-4 w-4" />;
+      case "compliance":
+        return <CheckCircle className="h-4 w-4" />;
+      default:
+        return <Bell className="h-4 w-4" />;
     }
   };
 
   const getDaysUntilDue = (dueDate: string): string => {
-    const days = AlertService.getDaysUntilDue(dueDate);
+    const days = ComplianceAlertService.getDaysUntilDue(dueDate);
     if (days < 0) return "Overdue";
     if (days === 0) return "Due today";
     if (days === 1) return "Due tomorrow";
@@ -65,93 +125,52 @@ export default function ComplianceAlerts() {
   };
 
   const getDaysColor = (dueDate: string): string => {
-    const days = AlertService.getDaysUntilDue(dueDate);
+    const days = ComplianceAlertService.getDaysUntilDue(dueDate);
     if (days < 0) return "text-red-600 font-semibold";
     if (days <= 3) return "text-red-500";
     if (days <= 7) return "text-yellow-600";
     return "text-gray-600";
   };
 
-  const handleAcknowledge = (alertId: string) => {
-    AlertService.acknowledgeAlert(alertId);
-    setAlerts([...AlertService.getAllAlerts()]);
-    applyFilters();
-    toast({
-      title: "Alert Acknowledged",
-      description: "Alert has been marked as acknowledged"
-    });
-  };
-
-  const handleResolve = (alertId: string) => {
-    AlertService.resolveAlert(alertId);
-    setAlerts([...AlertService.getAllAlerts()]);
-    applyFilters();
-    toast({
-      title: "Alert Resolved",
-      description: "Alert has been marked as resolved"
-    });
-  };
-
-  const handleSnooze = (alertId: string) => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    AlertService.snoozeAlert(alertId, tomorrow.toISOString().split('T')[0]);
-    setAlerts([...AlertService.getAllAlerts()]);
-    applyFilters();
-    toast({
-      title: "Alert Snoozed",
-      description: "Alert has been snoozed until tomorrow"
-    });
-  };
-
-  const applyFilters = () => {
-    let filtered = AlertService.getAlertsByRole(filters.role);
-    
-    if (filters.type && filters.type !== 'all') {
-      filtered = filtered.filter(a => a.type === filters.type);
+  const updateStatus = async (
+    alertId: number,
+    status: ComplianceAlertRecord["status"],
+    options?: { isRead?: boolean; snoozedUntil?: string | null },
+  ) => {
+    try {
+      await ComplianceAlertService.updateStatus(alertId, status, options);
+      await loadAlerts();
+      toast({
+        title: "Alert Updated",
+        description: `Alert marked as ${status}.`,
+      });
+    } catch (error) {
+      console.error("Failed to update alert:", error);
+      toast({
+        title: "Update Failed",
+        description: "Could not update the selected alert.",
+        variant: "destructive",
+      });
     }
-    if (filters.severity && filters.severity !== 'all') {
-      filtered = filtered.filter(a => a.severity === filters.severity);
-    }
-    if (filters.status && filters.status !== 'all') {
-      filtered = filtered.filter(a => a.status === filters.status);
-    }
-
-    setFilteredAlerts(filtered);
   };
 
   const clearFilters = () => {
     setFilters({
-      type: 'all',
-      severity: 'all',
-      status: 'all',
-      role: 'admin'
-    });
-    setFilteredAlerts(AlertService.getAlertsByRole('admin'));
-  };
-
-  const handleManualAlertCreated = (alert: Alert) => {
-    setAlerts([...AlertService.getAllAlerts()]);
-    applyFilters();
-    toast({
-      title: "Alert Created",
-      description: "Manual alert has been created successfully"
+      type: "all",
+      severity: "all",
+      status: "all",
+      role: "admin",
     });
   };
-
-  // Apply filters when filter state changes
-  useState(() => {
-    applyFilters();
-  });
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link to="/">
               <Button variant="ghost" size="sm">
-                <ArrowLeft className="w-4 h-4 mr-2" />
+                <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to Dashboard
               </Button>
             </Link>
@@ -162,59 +181,57 @@ export default function ComplianceAlerts() {
               Clear Filters
             </Button>
             <Button onClick={() => setIsManualAlertOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
+              <Plus className="mr-2 h-4 w-4" />
               Create Alert
             </Button>
           </div>
         </div>
 
-        {/* Alert Statistics */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-5">
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-red-600">{stats.active}</div>
+              <div className="text-2xl font-bold text-red-600">{summary.active}</div>
               <div className="text-sm text-gray-600">Active Alerts</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-yellow-600">{stats.acknowledged}</div>
+              <div className="text-2xl font-bold text-yellow-600">{summary.acknowledged}</div>
               <div className="text-sm text-gray-600">Acknowledged</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-green-600">{stats.resolved}</div>
+              <div className="text-2xl font-bold text-green-600">{summary.resolved}</div>
               <div className="text-sm text-gray-600">Resolved</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-red-500">{stats.highPriority}</div>
+              <div className="text-2xl font-bold text-red-500">{summary.highPriority}</div>
               <div className="text-sm text-gray-600">High Priority</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">{stats.total}</div>
+              <div className="text-2xl font-bold">{summary.total}</div>
               <div className="text-sm text-gray-600">Total Alerts</div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Filters */}
         <Card className="mb-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Filter className="w-5 h-5" />
+              <Filter className="h-5 w-5" />
               Filter Alerts
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
               <div>
                 <label className="text-sm font-medium">Type</label>
-                <Select value={filters.type} onValueChange={(value) => setFilters(prev => ({ ...prev, type: value }))}>
+                <Select value={filters.type} onValueChange={(value) => setFilters((prev) => ({ ...prev, type: value }))}>
                   <SelectTrigger>
                     <SelectValue placeholder="All types" />
                   </SelectTrigger>
@@ -231,7 +248,7 @@ export default function ComplianceAlerts() {
               </div>
               <div>
                 <label className="text-sm font-medium">Severity</label>
-                <Select value={filters.severity} onValueChange={(value) => setFilters(prev => ({ ...prev, severity: value }))}>
+                <Select value={filters.severity} onValueChange={(value) => setFilters((prev) => ({ ...prev, severity: value }))}>
                   <SelectTrigger>
                     <SelectValue placeholder="All severities" />
                   </SelectTrigger>
@@ -245,7 +262,7 @@ export default function ComplianceAlerts() {
               </div>
               <div>
                 <label className="text-sm font-medium">Status</label>
-                <Select value={filters.status} onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}>
+                <Select value={filters.status} onValueChange={(value) => setFilters((prev) => ({ ...prev, status: value }))}>
                   <SelectTrigger>
                     <SelectValue placeholder="All statuses" />
                   </SelectTrigger>
@@ -260,7 +277,7 @@ export default function ComplianceAlerts() {
               </div>
               <div>
                 <label className="text-sm font-medium">Role View</label>
-                <Select value={filters.role} onValueChange={(value) => setFilters(prev => ({ ...prev, role: value }))}>
+                <Select value={filters.role} onValueChange={(value) => setFilters((prev) => ({ ...prev, role: value }))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -269,21 +286,18 @@ export default function ComplianceAlerts() {
                     <SelectItem value="hr">HR Manager</SelectItem>
                     <SelectItem value="accountant">Accountant</SelectItem>
                     <SelectItem value="legal">Legal</SelectItem>
+                    <SelectItem value="all">All Roles</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            <Button onClick={applyFilters} className="mt-4">
-              Apply Filters
-            </Button>
           </CardContent>
         </Card>
 
-        {/* Alert Table */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Bell className="w-5 h-5" />
+              <Bell className="h-5 w-5" />
               Alert Center ({filteredAlerts.length} alerts)
             </CardTitle>
           </CardHeader>
@@ -314,21 +328,15 @@ export default function ComplianceAlerts() {
                         <div className="font-medium">{alert.title}</div>
                         <div className="text-sm text-gray-600">{alert.description}</div>
                         {alert.actionRequired && (
-                          <div className="text-xs text-blue-600 mt-1">
-                            Action: {alert.actionRequired}
-                          </div>
+                          <div className="mt-1 text-xs text-blue-600">Action: {alert.actionRequired}</div>
                         )}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getSeverityColor(alert.severity)}>
-                        {alert.severity}
-                      </Badge>
+                      <Badge className={getSeverityColor(alert.severity)}>{alert.severity}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getStatusColor(alert.status)}>
-                        {alert.status}
-                      </Badge>
+                      <Badge className={getStatusColor(alert.status)}>{alert.status}</Badge>
                     </TableCell>
                     <TableCell>
                       <div>
@@ -339,7 +347,7 @@ export default function ComplianceAlerts() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={alert.source === 'auto' ? 'bg-green-50' : 'bg-blue-50'}>
+                      <Badge variant="outline" className={alert.source === "auto" ? "bg-green-50" : "bg-blue-50"}>
                         {alert.source}
                       </Badge>
                     </TableCell>
@@ -347,42 +355,41 @@ export default function ComplianceAlerts() {
                       <div className="flex gap-1">
                         {alert.status === "active" && (
                           <>
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               variant="outline"
-                              onClick={() => handleAcknowledge(alert.id)}
+                              onClick={() => void updateStatus(alert.id, "acknowledged", { isRead: true })}
                             >
                               Acknowledge
                             </Button>
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              onClick={() => handleSnooze(alert.id)}
-                            >
-                              <Clock className="w-3 h-3" />
-                            </Button>
-                            <Button 
+                            <Button
                               size="sm"
-                              onClick={() => handleResolve(alert.id)}
+                              variant="outline"
+                              onClick={() => {
+                                const tomorrow = new Date();
+                                tomorrow.setDate(tomorrow.getDate() + 1);
+                                void updateStatus(alert.id, "snoozed", {
+                                  isRead: true,
+                                  snoozedUntil: tomorrow.toISOString().split("T")[0],
+                                });
+                              }}
                             >
+                              <Clock className="h-3 w-3" />
+                            </Button>
+                            <Button size="sm" onClick={() => void updateStatus(alert.id, "resolved", { isRead: true })}>
                               Resolve
                             </Button>
                           </>
                         )}
                         {alert.status === "acknowledged" && (
-                          <Button 
-                            size="sm"
-                            onClick={() => handleResolve(alert.id)}
-                          >
+                          <Button size="sm" onClick={() => void updateStatus(alert.id, "resolved", { isRead: true })}>
                             Resolve
                           </Button>
                         )}
-                        {alert.status === "resolved" && (
-                          <Badge variant="outline">Completed</Badge>
-                        )}
+                        {alert.status === "resolved" && <Badge variant="outline">Completed</Badge>}
                         {alert.status === "snoozed" && (
                           <Badge variant="outline" className="bg-purple-50">
-                            <Clock className="w-3 h-3 mr-1" />
+                            <Clock className="mr-1 h-3 w-3" />
                             Snoozed
                           </Badge>
                         )}
@@ -398,7 +405,7 @@ export default function ComplianceAlerts() {
         <ManualAlertForm
           open={isManualAlertOpen}
           onClose={() => setIsManualAlertOpen(false)}
-          onAlertCreated={handleManualAlertCreated}
+          onAlertCreated={() => void loadAlerts()}
         />
       </div>
     </div>

@@ -1,3 +1,9 @@
+import axios from "axios";
+import {
+  COMPANY_BASE_URL,
+  getCompanyHeaders,
+  requestWithCompanyFallback,
+} from "./companyApi";
 
 export interface FixedAsset {
   id: number;
@@ -5,25 +11,30 @@ export interface FixedAsset {
   category: string;
   acquisitionDate: string;
   acquisitionCost: number;
-  depreciationMethod: 'straight_line' | 'reducing_balance';
+  depreciationMethod: "straight_line" | "reducing_balance";
   usefulLifeYears: number;
   residualValue: number;
   currentBookValue: number;
   location: string;
-  supplier?: string;
-  status: 'active' | 'retired' | 'disposed';
+  supplier?: string | null;
+  status: "active" | "retired" | "disposed";
+  retirementDate?: string | null;
+  disposalAmount?: number | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface AssetDepreciation {
-  assetId: number;
-  year: number;
-  month: number;
-  depreciationAmount: number;
-  accumulatedDepreciation: number;
-  bookValue: number;
-  createdAt: string;
+export interface CreateFixedAssetInput {
+  name: string;
+  category: string;
+  acquisitionDate: string;
+  acquisitionCost: number;
+  depreciationMethod: "straight_line" | "reducing_balance";
+  usefulLifeYears: number;
+  residualValue: number;
+  location: string;
+  supplier?: string;
+  status: "active" | "retired" | "disposed";
 }
 
 export interface AssetSummary {
@@ -35,267 +46,197 @@ export interface AssetSummary {
   retiredAssets: number;
 }
 
+interface FixedAssetApiRecord {
+  id: number;
+  name: string;
+  category: string;
+  acquisition_date: string;
+  acquisition_cost: number | string;
+  depreciation_method: "straight_line" | "reducing_balance";
+  useful_life_years: number | string;
+  residual_value: number | string;
+  location: string | null;
+  supplier: string | null;
+  status: "active" | "retired" | "disposed";
+  retirement_date: string | null;
+  disposal_amount: number | string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface FixedAssetResponse {
+  records: FixedAssetApiRecord[];
+}
+
 class FixedAssetService {
-  private static STORAGE_KEY = 'fixed_assets';
-  private static DEPRECIATION_KEY = 'asset_depreciation';
+  static async getAllAssets(companyId?: string): Promise<FixedAsset[]> {
+    return requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.get<FixedAssetResponse>(
+        `${COMPANY_BASE_URL}/${targetId}/fixed-assets`,
+        getCompanyHeaders(targetId),
+      );
 
-  static getAllAssets(): FixedAsset[] {
-    const data = localStorage.getItem(this.STORAGE_KEY);
-    return data ? JSON.parse(data) : this.getDefaultAssets();
+      return (response.data.records || []).map((record) => this.mapAsset(record));
+    });
   }
 
-  static getDefaultAssets(): FixedAsset[] {
-    const defaultAssets: FixedAsset[] = [
-      {
-        id: 1,
-        name: "Dell Laptop - IT001",
-        category: "Computer Equipment",
-        acquisitionDate: "2023-05-15",
-        acquisitionCost: 850000,
-        depreciationMethod: 'straight_line',
-        usefulLifeYears: 4,
-        residualValue: 0,
-        currentBookValue: 637500,
-        location: "IT Department",
-        supplier: "Dell Rwanda",
-        status: "active",
-        createdAt: "2023-05-15T00:00:00Z",
-        updatedAt: new Date().toISOString()
-      },
-      {
-        id: 2,
-        name: "Toyota Hiace - Vehicle001",
-        category: "Vehicle",
-        acquisitionDate: "2022-08-20",
-        acquisitionCost: 15000000,
-        depreciationMethod: 'straight_line',
-        usefulLifeYears: 5,
-        residualValue: 3000000,
-        currentBookValue: 9600000,
-        location: "Main Office",
-        supplier: "Toyota Rwanda",
-        status: "active",
-        createdAt: "2022-08-20T00:00:00Z",
-        updatedAt: new Date().toISOString()
-      },
-      {
-        id: 3,
-        name: "Office Furniture Set",
-        category: "Furniture",
-        acquisitionDate: "2024-01-10",
-        acquisitionCost: 1200000,
-        depreciationMethod: 'straight_line',
-        usefulLifeYears: 10,
-        residualValue: 0,
-        currentBookValue: 1080000,
-        location: "Administration",
-        supplier: "Furniture Plus",
-        status: "active",
-        createdAt: "2024-01-10T00:00:00Z",
-        updatedAt: new Date().toISOString()
-      }
-    ];
+  static async addAsset(assetData: CreateFixedAssetInput, companyId?: string): Promise<FixedAsset> {
+    return requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.post<FixedAssetApiRecord>(
+        `${COMPANY_BASE_URL}/${targetId}/fixed-assets`,
+        {
+          name: assetData.name,
+          category: assetData.category,
+          acquisition_date: assetData.acquisitionDate,
+          acquisition_cost: assetData.acquisitionCost,
+          depreciation_method: assetData.depreciationMethod,
+          useful_life_years: assetData.usefulLifeYears,
+          residual_value: assetData.residualValue,
+          location: assetData.location || null,
+          supplier: assetData.supplier || null,
+          status: assetData.status,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-company-id": targetId,
+          },
+        },
+      );
 
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(defaultAssets));
-    return defaultAssets;
+      return this.mapAsset(response.data);
+    });
   }
 
-  static saveAssets(assets: FixedAsset[]): void {
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(assets));
+  static async retireAsset(
+    id: number,
+    retirementDate: string,
+    disposalAmount?: number,
+    companyId?: string,
+  ): Promise<FixedAsset> {
+    return requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.patch<FixedAssetApiRecord>(
+        `${COMPANY_BASE_URL}/${targetId}/fixed-assets/${id}/retire`,
+        {
+          retirement_date: retirementDate,
+          disposal_amount: disposalAmount,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-company-id": targetId,
+          },
+        },
+      );
+
+      return this.mapAsset(response.data);
+    });
   }
 
-  static addAsset(assetData: Omit<FixedAsset, 'id' | 'currentBookValue' | 'createdAt' | 'updatedAt'>): FixedAsset {
-    const assets = this.getAllAssets();
-    const newAsset: FixedAsset = {
-      ...assetData,
-      id: Math.max(0, ...assets.map(a => a.id)) + 1,
-      currentBookValue: assetData.acquisitionCost,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    assets.push(newAsset);
-    this.saveAssets(assets);
-    return newAsset;
+  static async updateAllDepreciation(): Promise<void> {
+    return Promise.resolve();
   }
 
-  static updateAsset(id: number, updates: Partial<FixedAsset>): boolean {
-    const assets = this.getAllAssets();
-    const index = assets.findIndex(a => a.id === id);
-    
-    if (index === -1) return false;
-
-    assets[index] = {
-      ...assets[index],
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-
-    this.saveAssets(assets);
-    return true;
-  }
-
-  static deleteAsset(id: number): boolean {
-    const assets = this.getAllAssets();
-    const filteredAssets = assets.filter(a => a.id !== id);
-    
-    if (filteredAssets.length === assets.length) return false;
-
-    this.saveAssets(filteredAssets);
-    return true;
-  }
-
-  static calculateDepreciation(asset: FixedAsset, asOfDate: Date = new Date()): {
+  static calculateDepreciation(
+    asset: FixedAsset,
+    asOfDate: Date = new Date(),
+  ): {
     annualDepreciation: number;
     monthsUsed: number;
     accumulatedDepreciation: number;
     currentBookValue: number;
   } {
     const acquisitionDate = new Date(asset.acquisitionDate);
-    const monthsUsed = this.getMonthsDifference(acquisitionDate, asOfDate);
-    const totalUsefulMonths = asset.usefulLifeYears * 12;
-    
-    if (asset.depreciationMethod === 'straight_line') {
+    const endDate = asset.retirementDate ? new Date(asset.retirementDate) : asOfDate;
+    const monthsUsed = this.getMonthsDifference(acquisitionDate, endDate);
+
+    if (asset.depreciationMethod === "straight_line") {
       const annualDepreciation = (asset.acquisitionCost - asset.residualValue) / asset.usefulLifeYears;
       const monthlyDepreciation = annualDepreciation / 12;
       const accumulatedDepreciation = Math.min(
         monthlyDepreciation * monthsUsed,
-        asset.acquisitionCost - asset.residualValue
+        asset.acquisitionCost - asset.residualValue,
       );
       const currentBookValue = Math.max(
         asset.acquisitionCost - accumulatedDepreciation,
-        asset.residualValue
+        asset.residualValue,
       );
 
       return {
         annualDepreciation,
         monthsUsed,
         accumulatedDepreciation,
-        currentBookValue
+        currentBookValue,
       };
     }
 
-    // For now, only implement straight line
     return {
       annualDepreciation: 0,
       monthsUsed,
       accumulatedDepreciation: 0,
-      currentBookValue: asset.acquisitionCost
+      currentBookValue: asset.acquisitionCost,
     };
   }
 
-  static updateAllDepreciation(): void {
-    const assets = this.getAllAssets();
-    const updatedAssets = assets.map(asset => {
-      if (asset.status === 'active') {
-        const depreciation = this.calculateDepreciation(asset);
-        return {
-          ...asset,
-          currentBookValue: depreciation.currentBookValue,
-          updatedAt: new Date().toISOString()
-        };
-      }
-      return asset;
-    });
-
-    this.saveAssets(updatedAssets);
-  }
-
-  static getAssetSummary(): AssetSummary {
-    const assets = this.getAllAssets();
-    
+  static getAssetSummary(assets: FixedAsset[]): AssetSummary {
     return {
       totalAssets: assets.length,
       totalOriginalCost: assets.reduce((sum, asset) => sum + asset.acquisitionCost, 0),
       totalCurrentValue: assets.reduce((sum, asset) => sum + asset.currentBookValue, 0),
       totalDepreciation: assets.reduce((sum, asset) => {
-        const depreciation = this.calculateDepreciation(asset);
-        return sum + depreciation.accumulatedDepreciation;
+        if (asset.status === "disposed" && asset.disposalAmount !== null && asset.disposalAmount !== undefined) {
+          return sum + Math.max(0, asset.acquisitionCost - asset.disposalAmount);
+        }
+
+        return sum + this.calculateDepreciation(asset).accumulatedDepreciation;
       }, 0),
-      activeAssets: assets.filter(a => a.status === 'active').length,
-      retiredAssets: assets.filter(a => a.status !== 'active').length
+      activeAssets: assets.filter((asset) => asset.status === "active").length,
+      retiredAssets: assets.filter((asset) => asset.status !== "active").length,
     };
   }
 
-  static retireAsset(id: number, disposalDate: string, disposalAmount?: number): boolean {
-    const assets = this.getAllAssets();
-    const asset = assets.find(a => a.id === id);
-    
-    if (!asset) return false;
-
-    const depreciation = this.calculateDepreciation(asset, new Date(disposalDate));
-    
-    // Calculate gain/loss on disposal if disposal amount provided
-    let gainLoss = 0;
-    if (disposalAmount !== undefined) {
-      gainLoss = disposalAmount - depreciation.currentBookValue;
-    }
-
-    this.updateAsset(id, {
-      status: disposalAmount !== undefined ? 'disposed' : 'retired',
-      currentBookValue: disposalAmount !== undefined ? disposalAmount : depreciation.currentBookValue
-    });
-
-    return true;
-  }
-
-  static getAssetsByCategory(): { [category: string]: FixedAsset[] } {
-    const assets = this.getAllAssets();
-    return assets.reduce((acc, asset) => {
-      if (!acc[asset.category]) {
-        acc[asset.category] = [];
-      }
-      acc[asset.category].push(asset);
-      return acc;
-    }, {} as { [category: string]: FixedAsset[] });
-  }
-
-  static exportToCSV(): string {
-    const assets = this.getAllAssets();
+  static exportToCSV(assets: FixedAsset[]): string {
     const headers = [
-      'Asset Name',
-      'Category',
-      'Acquisition Date',
-      'Original Cost (RWF)',
-      'Current Value (RWF)',
-      'Depreciation Method',
-      'Useful Life (Years)',
-      'Location',
-      'Status'
+      "Asset Name",
+      "Category",
+      "Acquisition Date",
+      "Original Cost (RWF)",
+      "Current Value (RWF)",
+      "Depreciation Method",
+      "Useful Life (Years)",
+      "Location",
+      "Status",
     ];
 
-    const csvData = [
-      headers.join(','),
-      ...assets.map(asset => [
-        asset.name,
-        asset.category,
-        asset.acquisitionDate,
-        asset.acquisitionCost,
-        asset.currentBookValue,
-        asset.depreciationMethod,
-        asset.usefulLifeYears,
-        asset.location,
-        asset.status
-      ].join(','))
-    ].join('\n');
-
-    return csvData;
+    return [
+      headers.join(","),
+      ...assets.map((asset) =>
+        [
+          asset.name,
+          asset.category,
+          asset.acquisitionDate,
+          asset.acquisitionCost,
+          asset.currentBookValue,
+          asset.depreciationMethod,
+          asset.usefulLifeYears,
+          asset.location,
+          asset.status,
+        ].join(","),
+      ),
+    ].join("\n");
   }
 
-  static getDepreciationSchedule(assetId: number): Array<{
+  static getDepreciationSchedule(asset: FixedAsset): Array<{
     year: number;
     openingValue: number;
     depreciation: number;
     closingValue: number;
   }> {
-    const asset = this.getAllAssets().find(a => a.id === assetId);
-    if (!asset) return [];
-
     const schedule = [];
     const annualDepreciation = (asset.acquisitionCost - asset.residualValue) / asset.usefulLifeYears;
     let currentValue = asset.acquisitionCost;
 
-    for (let year = 1; year <= asset.usefulLifeYears; year++) {
+    for (let year = 1; year <= asset.usefulLifeYears; year += 1) {
       const openingValue = currentValue;
       const depreciation = Math.min(annualDepreciation, currentValue - asset.residualValue);
       currentValue = Math.max(currentValue - depreciation, asset.residualValue);
@@ -304,26 +245,63 @@ class FixedAssetService {
         year,
         openingValue,
         depreciation,
-        closingValue: currentValue
+        closingValue: currentValue,
       });
 
-      if (currentValue <= asset.residualValue) break;
+      if (currentValue <= asset.residualValue) {
+        break;
+      }
     }
 
     return schedule;
   }
 
-  private static getMonthsDifference(date1: Date, date2: Date): number {
-    const months = (date2.getFullYear() - date1.getFullYear()) * 12;
-    return months - date1.getMonth() + date2.getMonth();
+  static formatCurrency(amount: number): string {
+    return new Intl.NumberFormat("en-RW", {
+      style: "currency",
+      currency: "RWF",
+      minimumFractionDigits: 0,
+    }).format(amount);
   }
 
-  static formatCurrency(amount: number): string {
-    return new Intl.NumberFormat('en-RW', {
-      style: 'currency',
-      currency: 'RWF',
-      minimumFractionDigits: 0
-    }).format(amount);
+  private static mapAsset(record: FixedAssetApiRecord): FixedAsset {
+    const baseAsset: FixedAsset = {
+      id: Number(record.id),
+      name: record.name,
+      category: record.category,
+      acquisitionDate: record.acquisition_date,
+      acquisitionCost: Number(record.acquisition_cost || 0),
+      depreciationMethod: record.depreciation_method || "straight_line",
+      usefulLifeYears: Number(record.useful_life_years || 0),
+      residualValue: Number(record.residual_value || 0),
+      currentBookValue: 0,
+      location: record.location || "",
+      supplier: record.supplier,
+      status: record.status || "active",
+      retirementDate: record.retirement_date,
+      disposalAmount:
+        record.disposal_amount === null || record.disposal_amount === undefined
+          ? null
+          : Number(record.disposal_amount),
+      createdAt: record.created_at,
+      updatedAt: record.updated_at,
+    };
+
+    const calculated = this.calculateDepreciation(baseAsset);
+    const currentBookValue =
+      baseAsset.status === "disposed" && baseAsset.disposalAmount !== null && baseAsset.disposalAmount !== undefined
+        ? baseAsset.disposalAmount
+        : calculated.currentBookValue;
+
+    return {
+      ...baseAsset,
+      currentBookValue,
+    };
+  }
+
+  private static getMonthsDifference(date1: Date, date2: Date): number {
+    const months = (date2.getFullYear() - date1.getFullYear()) * 12;
+    return Math.max(0, months - date1.getMonth() + date2.getMonth());
   }
 }
 

@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Calendar, FileText, Upload, X } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -31,20 +31,26 @@ interface AuditReportFormData {
 
 export default function AuditReportForm({ open, onOpenChange, onSubmit, editData }: AuditReportFormProps) {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const initialValues = editData || {
+    title: '',
+    auditType: '',
+    auditor: '',
+    auditedPeriod: '',
+    reportDate: '',
+    status: 'Scheduled',
+    findings: 0,
+    description: '',
+    recommendations: ''
+  };
   
   const { register, handleSubmit, formState: { errors }, setValue, watch, reset } = useForm<AuditReportFormData>({
-    defaultValues: editData || {
-      title: '',
-      auditType: '',
-      auditor: '',
-      auditedPeriod: '',
-      reportDate: '',
-      status: 'Scheduled',
-      findings: 0,
-      description: '',
-      recommendations: ''
-    }
+    defaultValues: initialValues
   });
+
+  useEffect(() => {
+    reset(initialValues);
+    setUploadedFiles([]);
+  }, [editData, open, reset]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -92,7 +98,7 @@ export default function AuditReportForm({ open, onOpenChange, onSubmit, editData
 
             <div className="space-y-2">
               <Label htmlFor="auditType">Audit Type *</Label>
-              <Select onValueChange={(value) => setValue("auditType", value)}>
+              <Select value={watch("auditType")} onValueChange={(value) => setValue("auditType", value)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select audit type" />
                 </SelectTrigger>
@@ -120,7 +126,7 @@ export default function AuditReportForm({ open, onOpenChange, onSubmit, editData
 
             <div className="space-y-2">
               <Label htmlFor="status">Status *</Label>
-              <Select onValueChange={(value) => setValue("status", value)}>
+              <Select value={watch("status")} onValueChange={(value) => setValue("status", value)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>

@@ -7,15 +7,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import AlertService, { Alert } from "@/services/alertService";
+import { useToast } from "@/hooks/use-toast";
+import ComplianceAlertService, { ComplianceAlertRecord } from "@/services/complianceAlertService";
+import AuthService from "@/services/authService";
 
 interface ManualAlertFormProps {
   open: boolean;
   onClose: () => void;
-  onAlertCreated: (alert: Alert) => void;
+  onAlertCreated: (alert: ComplianceAlertRecord) => void;
 }
 
 export default function ManualAlertForm({ open, onClose, onAlertCreated }: ManualAlertFormProps) {
+  const { toast } = useToast();
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -25,6 +28,7 @@ export default function ManualAlertForm({ open, onClose, onAlertCreated }: Manua
     actionRequired: '',
     forRole: [] as string[]
   });
+  const [isSaving, setIsSaving] = useState(false);
 
   const roles = [
     { id: 'admin', label: 'Administrator' },
@@ -43,40 +47,54 @@ export default function ManualAlertForm({ open, onClose, onAlertCreated }: Manua
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.title || !formData.description || !formData.dueDate || formData.forRole.length === 0) {
+      toast({
+        title: "Missing Information",
+        description: "Provide the alert details and at least one notified role.",
+        variant: "destructive",
+      });
       return;
     }
 
-    const alert = AlertService.createManualAlert({
-      title: formData.title,
-      description: formData.description,
-      type: formData.type,
-      severity: formData.severity,
-      status: 'active',
-      alertDate: new Date().toISOString().split('T')[0],
-      dueDate: formData.dueDate,
-      forRole: formData.forRole,
-      isRead: false,
-      actionRequired: formData.actionRequired,
-      createdBy: 'current-user'
-    });
+    setIsSaving(true);
+    try {
+      const currentUser = AuthService.getUser();
+      const alert = await ComplianceAlertService.create({
+        title: formData.title,
+        description: formData.description,
+        type: formData.type,
+        severity: formData.severity,
+        dueDate: formData.dueDate,
+        forRole: formData.forRole,
+        actionRequired: formData.actionRequired || undefined,
+        createdBy: currentUser?.name || "Current User",
+        source: "manual",
+      });
 
-    onAlertCreated(alert);
-    onClose();
-    
-    // Reset form
-    setFormData({
-      title: '',
-      description: '',
-      type: 'custom',
-      severity: 'medium',
-      dueDate: '',
-      actionRequired: '',
-      forRole: []
-    });
+      onAlertCreated(alert);
+      onClose();
+      setFormData({
+        title: '',
+        description: '',
+        type: 'custom',
+        severity: 'medium',
+        dueDate: '',
+        actionRequired: '',
+        forRole: []
+      });
+    } catch (error) {
+      console.error("Failed to create alert:", error);
+      toast({
+        title: "Save Failed",
+        description: "Could not create the alert.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -182,8 +200,8 @@ export default function ManualAlertForm({ open, onClose, onAlertCreated }: Manua
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit">
-              Create Alert
+            <Button type="submit" disabled={isSaving}>
+              {isSaving ? "Creating..." : "Create Alert"}
             </Button>
           </div>
         </form>

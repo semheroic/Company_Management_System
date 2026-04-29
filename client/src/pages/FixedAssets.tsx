@@ -1,13 +1,25 @@
-import { ArrowLeft, Plus, Building2, Upload, Download, Eye, Filter, Calculator, AlertCircle, TrendingDown, Calendar, Search, FileText, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Building2,
+  Calculator,
+  Eye,
+  FileText,
+  Filter,
+  Loader2,
+  Plus,
+  TrendingDown,
+  Upload,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FixedAssetForm } from "@/components/forms/FixedAssetForm";
 import FixedAssetService, { FixedAsset } from "@/services/fixedAssetService";
 import UniversalTransactionService from "@/services/universalTransactionService";
@@ -22,140 +34,162 @@ export default function FixedAssets() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAsset, setSelectedAsset] = useState<FixedAsset | null>(null);
   const [showDepreciationDialog, setShowDepreciationDialog] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const loadAssets = async () => {
+    setIsLoading(true);
+    try {
+      const allAssets = await FixedAssetService.getAllAssets();
+      setAssets(allAssets);
+    } catch (error) {
+      console.error("Failed to load fixed assets:", error);
+      toast({
+        title: "Load Failed",
+        description: "Could not load fixed assets from the backend.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    loadAssets();
-    FixedAssetService.updateAllDepreciation();
+    void loadAssets();
   }, []);
 
-  const loadAssets = () => {
-    const allAssets = FixedAssetService.getAllAssets();
-    setAssets(allAssets);
+  const handleAssetSuccess = async () => {
+    await loadAssets();
   };
 
-  const handleAssetSuccess = () => {
-    loadAssets();
-  };
-
-  const handleUpdateDepreciation = () => {
-    FixedAssetService.updateAllDepreciation();
-    loadAssets();
+  const handleUpdateDepreciation = async () => {
+    await loadAssets();
     toast({
       title: "Depreciation Updated",
-      description: "All asset depreciation values have been updated"
+      description: "Current asset book values have been recalculated.",
     });
   };
 
-  const handlePostMonthlyDepreciation = () => {
-    const currentMonth = new Date().toISOString().slice(0, 7); // Format: YYYY-MM
+  const handlePostMonthlyDepreciation = async () => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
     UniversalTransactionService.postMonthlyDepreciation(currentMonth);
-    handleUpdateDepreciation();
+    await loadAssets();
     toast({
       title: "Monthly Depreciation Posted",
-      description: "Depreciation entries have been posted to accounting books"
+      description: "Depreciation entries have been posted to accounting books.",
     });
   };
 
-  const handleRetireAsset = (asset: FixedAsset) => {
-    const success = FixedAssetService.retireAsset(asset.id, new Date().toISOString().split('T')[0]);
-    if (success) {
-      loadAssets();
+  const handleRetireAsset = async (asset: FixedAsset) => {
+    try {
+      await FixedAssetService.retireAsset(asset.id, new Date().toISOString().split("T")[0]);
+      await loadAssets();
       toast({
         title: "Asset Retired",
-        description: `${asset.name} has been marked as retired`
+        description: `${asset.name} has been marked as retired.`,
+      });
+    } catch (error) {
+      console.error("Failed to retire asset:", error);
+      toast({
+        title: "Update Failed",
+        description: "Could not retire the selected asset.",
+        variant: "destructive",
       });
     }
   };
 
   const handleExportAssets = () => {
-    const csvData = FixedAssetService.exportToCSV();
-    const blob = new Blob([csvData], { type: 'text/csv' });
+    const csvData = FixedAssetService.exportToCSV(filteredAssets.length ? filteredAssets : assets);
+    const blob = new Blob([csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `fixed-assets-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `fixed-assets-${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
     window.URL.revokeObjectURL(url);
 
     toast({
       title: "Export Complete",
-      description: "Fixed assets data has been exported to CSV"
+      description: "Fixed assets data has been exported to CSV.",
     });
   };
 
-  const showDepreciationSchedule = (asset: FixedAsset) => {
-    setSelectedAsset(asset);
-    setShowDepreciationDialog(true);
-  };
-
-  const filteredAssets = assets.filter(asset => {
-    const matchesCategory = filterCategory === "all" || asset.category.toLowerCase().includes(filterCategory.toLowerCase());
+  const filteredAssets = assets.filter((asset) => {
+    const query = searchTerm.toLowerCase();
+    const matchesCategory =
+      filterCategory === "all" || asset.category.toLowerCase().includes(filterCategory.toLowerCase());
     const matchesStatus = filterStatus === "all" || asset.status === filterStatus;
-    const matchesSearch = searchTerm === "" || 
-      asset.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      asset.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      asset.supplier?.toLowerCase().includes(searchTerm.toLowerCase());
-    
+    const matchesSearch =
+      query === "" ||
+      asset.name.toLowerCase().includes(query) ||
+      asset.location.toLowerCase().includes(query) ||
+      asset.supplier?.toLowerCase().includes(query);
+
     return matchesCategory && matchesStatus && matchesSearch;
   });
 
-  const summary = FixedAssetService.getAssetSummary();
-  const categories = [...new Set(assets.map(asset => asset.category))];
+  const summary = FixedAssetService.getAssetSummary(assets);
+  const categories = [...new Set(assets.map((asset) => asset.category))];
 
   const getStatusBadgeColor = (status: string) => {
     switch (status) {
-      case 'active':
-        return 'bg-green-100 text-green-800';
-      case 'retired':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'disposed':
-        return 'bg-red-100 text-red-800';
+      case "active":
+        return "bg-green-100 text-green-800";
+      case "retired":
+        return "bg-yellow-100 text-yellow-800";
+      case "disposed":
+        return "bg-red-100 text-red-800";
       default:
-        return 'bg-gray-100 text-gray-800';
+        return "bg-gray-100 text-gray-800";
     }
   };
 
-  const getDepreciationSchedule = (asset: FixedAsset) => {
-    return FixedAssetService.getDepreciationSchedule(asset.id);
-  };
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+          <p className="text-sm text-gray-600">Loading fixed assets...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+        <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link to="/">
               <Button variant="ghost" size="sm">
-                <ArrowLeft className="w-4 h-4 mr-2" />
+                <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to Dashboard
               </Button>
             </Link>
             <h1 className="text-2xl font-semibold">Fixed Assets Register</h1>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleUpdateDepreciation}>
-              <Calculator className="w-4 h-4 mr-2" />
+            <Button variant="outline" onClick={() => void handleUpdateDepreciation()}>
+              <Calculator className="mr-2 h-4 w-4" />
               Update Depreciation
             </Button>
-            <Button variant="outline" onClick={handlePostMonthlyDepreciation}>
-              <FileText className="w-4 h-4 mr-2" />
+            <Button variant="outline" onClick={() => void handlePostMonthlyDepreciation()}>
+              <FileText className="mr-2 h-4 w-4" />
               Post Monthly Depreciation
             </Button>
             <Button variant="outline" onClick={handleExportAssets}>
-              <Upload className="w-4 h-4 mr-2" />
+              <Upload className="mr-2 h-4 w-4" />
               Export Assets
             </Button>
             <Button onClick={() => setShowAssetForm(true)}>
-              <Plus className="w-4 h-4 mr-2" />
+              <Plus className="mr-2 h-4 w-4" />
               Add Asset
             </Button>
           </div>
         </div>
 
-        {/* Summary Cards */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold">{summary.totalAssets}</div>
@@ -182,12 +216,11 @@ export default function FixedAssets() {
           </Card>
         </div>
 
-        {/* Assets Table */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
-                <Building2 className="w-5 h-5" />
+                <Building2 className="h-5 w-5" />
                 Assets Register
               </CardTitle>
               <div className="flex items-center gap-2">
@@ -215,14 +248,14 @@ export default function FixedAssets() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Input 
-                  placeholder="Search assets..." 
+                <Input
+                  placeholder="Search assets..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="max-w-xs" 
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  className="max-w-xs"
                 />
                 <Button variant="outline" size="sm">
-                  <Filter className="w-4 h-4" />
+                  <Filter className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -243,56 +276,73 @@ export default function FixedAssets() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredAssets.map((asset) => {
-                  const depreciation = FixedAssetService.calculateDepreciation(asset);
-                  return (
-                    <TableRow key={asset.id}>
-                      <TableCell className="font-medium">{asset.name}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{asset.category}</Badge>
-                      </TableCell>
-                      <TableCell>{asset.acquisitionDate}</TableCell>
-                      <TableCell className="text-right">
-                        {FixedAssetService.formatCurrency(asset.acquisitionCost)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {FixedAssetService.formatCurrency(depreciation.currentBookValue)}
-                      </TableCell>
-                      <TableCell className="text-right">{asset.usefulLifeYears} years</TableCell>
-                      <TableCell>{asset.location}</TableCell>
-                      <TableCell>
-                        <Badge className={getStatusBadgeColor(asset.status)}>
-                          {asset.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => showDepreciationSchedule(asset)}
-                            title="View Depreciation Schedule"
-                          >
-                            <TrendingDown className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" title="View Details">
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                          {asset.status === 'active' && (
-                            <Button 
-                              variant="ghost" 
+                {filteredAssets.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="py-8 text-center text-gray-500">
+                      No fixed assets found. Add an asset to start the register.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredAssets.map((asset) => {
+                    const depreciation = FixedAssetService.calculateDepreciation(asset);
+                    return (
+                      <TableRow key={asset.id}>
+                        <TableCell className="font-medium">{asset.name}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{asset.category}</Badge>
+                        </TableCell>
+                        <TableCell>{asset.acquisitionDate}</TableCell>
+                        <TableCell className="text-right">
+                          {FixedAssetService.formatCurrency(asset.acquisitionCost)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {FixedAssetService.formatCurrency(depreciation.currentBookValue)}
+                        </TableCell>
+                        <TableCell className="text-right">{asset.usefulLifeYears} years</TableCell>
+                        <TableCell>{asset.location || "Not set"}</TableCell>
+                        <TableCell>
+                          <Badge className={getStatusBadgeColor(asset.status)}>{asset.status}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
                               size="sm"
-                              onClick={() => handleRetireAsset(asset)}
-                              title="Retire Asset"
+                              title="View Depreciation Schedule"
+                              onClick={() => {
+                                setSelectedAsset(asset);
+                                setShowDepreciationDialog(true);
+                              }}
                             >
-                              <AlertCircle className="w-4 h-4" />
+                              <TrendingDown className="h-4 w-4" />
                             </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="View Details"
+                              onClick={() => {
+                                setSelectedAsset(asset);
+                                setShowDepreciationDialog(true);
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            {asset.status === "active" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="Retire Asset"
+                                onClick={() => void handleRetireAsset(asset)}
+                              >
+                                <AlertCircle className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
               </TableBody>
             </Table>
           </CardContent>
@@ -301,20 +351,22 @@ export default function FixedAssets() {
         <Dialog open={showDepreciationDialog} onOpenChange={setShowDepreciationDialog}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>
-                Depreciation Schedule - {selectedAsset?.name}
-              </DialogTitle>
+              <DialogTitle>Depreciation Schedule - {selectedAsset?.name}</DialogTitle>
             </DialogHeader>
             {selectedAsset && (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded">
+                <div className="grid grid-cols-2 gap-4 rounded bg-gray-50 p-4">
                   <div>
                     <div className="text-sm text-gray-600">Original Cost</div>
-                    <div className="font-semibold">{FixedAssetService.formatCurrency(selectedAsset.acquisitionCost)}</div>
+                    <div className="font-semibold">
+                      {FixedAssetService.formatCurrency(selectedAsset.acquisitionCost)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-sm text-gray-600">Residual Value</div>
-                    <div className="font-semibold">{FixedAssetService.formatCurrency(selectedAsset.residualValue)}</div>
+                    <div className="font-semibold">
+                      {FixedAssetService.formatCurrency(selectedAsset.residualValue)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-sm text-gray-600">Useful Life</div>
@@ -322,10 +374,12 @@ export default function FixedAssets() {
                   </div>
                   <div>
                     <div className="text-sm text-gray-600">Depreciation Method</div>
-                    <div className="font-semibold capitalize">{selectedAsset.depreciationMethod.replace('_', ' ')}</div>
+                    <div className="font-semibold capitalize">
+                      {selectedAsset.depreciationMethod.replace("_", " ")}
+                    </div>
                   </div>
                 </div>
-                
+
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -336,7 +390,7 @@ export default function FixedAssets() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {getDepreciationSchedule(selectedAsset).map((row) => (
+                    {FixedAssetService.getDepreciationSchedule(selectedAsset).map((row) => (
                       <TableRow key={row.year}>
                         <TableCell>{row.year}</TableCell>
                         <TableCell className="text-right">
@@ -357,8 +411,8 @@ export default function FixedAssets() {
           </DialogContent>
         </Dialog>
 
-        <FixedAssetForm 
-          open={showAssetForm} 
+        <FixedAssetForm
+          open={showAssetForm}
           onClose={() => setShowAssetForm(false)}
           onSuccess={handleAssetSuccess}
         />

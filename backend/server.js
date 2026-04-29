@@ -1,14 +1,19 @@
-const express = require('express'),
+﻿const express = require('express'),
     mysql = require('mysql2'),
+    bcrypt = require('bcrypt'),
     cors = require('cors'),
     dotenv = require('dotenv'),
     multer = require('multer'),
     fs = require('fs'),
     fsPromises = fs.promises,
-    path = require('path');
+    path = require('path'),
+    { runMigrations } = require('./lib/runMigrations'),
+    { signJwt, verifyJwt } = require('./lib/jwt');
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 const app = express(), PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 app.use(cors());
 app.use(express.json());
@@ -41,9 +46,15 @@ const db = mysql.createPool({
     connectionLimit: 10
 }).promise();
 
+const verifyDatabaseConnection = async () => {
+    const conn = await db.getConnection();
+    console.log('DB connected');
+    conn.release();
+};
+
 db.getConnection()
-    .then(conn => { console.log('✅ DB Connected'); conn.release(); })
-    .catch(err => { console.error('❌ DB Connection Error:', err.message); process.exit(1); });
+    .then(conn => { console.log('âœ… DB Connected'); conn.release(); })
+    .catch(err => { console.error('âŒ DB Connection Error:', err.message); process.exit(1); });
 
 // --- 3. FILE UPLOADS & UTILS ---
 
@@ -150,6 +161,227 @@ const generateInvoiceNumber = (type) => {
     return `${prefix}-${year}-${Date.now()}`;
 };
 
+const parseJsonSafely = (value) => {
+    if (!value) return null;
+    try {
+        return JSON.parse(value);
+    } catch {
+        return value;
+    }
+};
+
+const toNumber = (value) => Number(value || 0);
+
+const getTodayDate = () => new Date().toISOString().split('T')[0];
+
+const resolveTaxReturnStatus = (status, dueDate, submissionDate) => {
+    if (submissionDate || status === 'Filed') {
+        return 'Filed';
+    }
+
+    if (dueDate && new Date(dueDate) < new Date(getTodayDate())) {
+        return 'Overdue';
+    }
+
+    return status || 'Pending';
+};
+
+const formatFixedAssetRecord = (row) => ({
+    ...row,
+    acquisition_cost: toNumber(row.acquisition_cost),
+    useful_life_years: toNumber(row.useful_life_years),
+    residual_value: toNumber(row.residual_value),
+    disposal_amount: row.disposal_amount === null || row.disposal_amount === undefined ? null : toNumber(row.disposal_amount)
+});
+
+const formatTaxReturnRecord = (row) => ({
+    ...row,
+    total_declared: toNumber(row.total_declared),
+    payload: parseJsonSafely(row.payload_json)
+});
+
+const parseRolesValue = (value) => {
+    if (Array.isArray(value)) return value;
+    const parsed = parseJsonSafely(value);
+    return Array.isArray(parsed) ? parsed : [];
+};
+
+const resolveDeadlineStatus = (status, dueDate) => {
+    if (status === 'completed') return 'completed';
+    if (dueDate && new Date(dueDate) < new Date(getTodayDate())) return 'overdue';
+    return status || 'pending';
+};
+
+const calculatePaye = (grossSalary) => {
+    const taxableAmount = Math.max(0, toNumber(grossSalary) - 30000);
+    return Math.round(taxableAmount * 0.15);
+};
+
+const calculateRssb = (grossSalary) => {
+    const normalized = toNumber(grossSalary);
+    return {
+        employee: Math.round(normalized * 0.075),
+        employer: Math.round(normalized * 0.075)
+    };
+};
+
+const formatEmployeeRecord = (row) => ({
+    ...row,
+    gross_salary: toNumber(row.gross_salary)
+});
+
+const formatPayrollRecord = (row) => ({
+    id: Number(row.id),
+    company_id: Number(row.company_id),
+    employee_id: Number(row.employee_id),
+    payroll_month: row.payroll_month,
+    pay_date: row.pay_date,
+    gross_salary: toNumber(row.gross_salary),
+    paye_tax: toNumber(row.paye_tax),
+    rssb_employee: toNumber(row.rssb_employee),
+    rssb_employer: toNumber(row.rssb_employer),
+    net_salary: toNumber(row.net_salary),
+    status: row.status,
+    paid_at: row.paid_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    employee: row.employee_id ? {
+        id: Number(row.employee_id),
+        full_name: row.employee_full_name,
+        email: row.employee_email,
+        phone: row.employee_phone,
+        national_id: row.employee_national_id,
+        position: row.employee_position,
+        department: row.employee_department,
+        start_date: row.employee_start_date,
+        gross_salary: toNumber(row.employee_gross_salary),
+        rssb_number: row.employee_rssb_number,
+        status: row.employee_status,
+        contract_file_name: row.employee_contract_file_name,
+        contract_file_path: row.employee_contract_file_path
+    } : null
+});
+
+const formatAuditReportRecord = (row) => ({
+    ...row,
+    findings_count: Number(row.findings_count || 0)
+});
+
+const formatComplaintRiskRecord = (row) => ({
+    ...row
+});
+
+const formatComplianceAlertRecord = (row) => ({
+    ...row,
+    for_roles: parseRolesValue(row.for_roles_json),
+    is_read: Boolean(row.is_read)
+});
+
+const formatComplianceDeadlineRecord = (row) => ({
+    ...row,
+    status: resolveDeadlineStatus(row.status, row.due_date)
+});
+
+const formatDocumentVaultRecord = (row) => ({
+    ...row,
+    file_size: Number(row.file_size || 0),
+    secured: Boolean(row.secured)
+});
+
+const defaultCompanySettings = () => ({
+    general: {
+        companyName: '',
+        companyEmail: '',
+        timeZone: 'Africa/Kigali',
+        currency: 'RWF',
+        language: 'English'
+    },
+    notifications: {
+        emailNotifications: true,
+        smsNotifications: false,
+        deadlineAlerts: true,
+        systemUpdates: true,
+        reportReady: true
+    },
+    security: {
+        twoFactorAuth: false,
+        sessionTimeout: '30',
+        passwordPolicy: 'strong',
+        auditLogging: true
+    },
+    integrations: {
+        emailServiceConfigured: false,
+        backupConfigured: false
+    }
+});
+
+const buildSettingsResponse = (row) => {
+    const defaults = defaultCompanySettings();
+    if (!row) return defaults;
+
+    return {
+        general: parseJsonSafely(row.general_json) || defaults.general,
+        notifications: parseJsonSafely(row.notifications_json) || defaults.notifications,
+        security: parseJsonSafely(row.security_json) || defaults.security,
+        integrations: parseJsonSafely(row.integrations_json) || defaults.integrations
+    };
+};
+
+const getAuthTokenFromRequest = (req) => {
+    const header = req.headers.authorization || '';
+    if (!header.startsWith('Bearer ')) {
+        throw new AppError('Authorization token is required', 401);
+    }
+
+    return header.slice(7).trim();
+};
+
+const getAuthUserById = async (userId) => {
+    const [[user]] = await db.query(`
+        SELECT
+            u.id, u.name, u.email, u.status, u.last_login, u.created_at,
+            r.id AS role_id, r.name AS role,
+            d.id AS department_id, d.name AS department
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        LEFT JOIN departments d ON u.department_id = d.id
+        WHERE u.id = ?
+        LIMIT 1
+    `, [userId]);
+
+    if (!user) {
+        throw new AppError('User not found', 404);
+    }
+
+    const [permissionRows] = await db.query(`
+        SELECT p.name
+        FROM permissions p
+        JOIN user_permissions up ON p.id = up.permission_id
+        WHERE up.user_id = ?
+        ORDER BY p.name ASC
+    `, [userId]);
+
+    return {
+        ...user,
+        permissions: permissionRows.map((permission) => permission.name)
+    };
+};
+
+const createAuthResponse = async (userId) => {
+    const user = await getAuthUserById(userId);
+    const token = signJwt(
+        {
+            sub: user.id,
+            email: user.email,
+            role: user.role || null
+        },
+        JWT_SECRET,
+        JWT_EXPIRES_IN
+    );
+
+    return { token, user };
+};
+
 // --- 4. MIDDLEWARE ---
 
 // --- 4. MIDDLEWARE ---
@@ -178,6 +410,90 @@ const validateCompany = asyncHandler(async (req, res, next) => {
 });
 
 // --- 5. ROUTES ---
+
+app.post('/api/auth/signup', asyncHandler(async (req, res) => {
+    const {
+        name,
+        email,
+        password,
+        role_id,
+        department_id
+    } = req.body;
+
+    if (!name || !email || !password) {
+        throw new AppError('Name, email, and password are required', 400);
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const [[existingUser]] = await db.query('SELECT id FROM users WHERE email = ? LIMIT 1', [normalizedEmail]);
+    if (existingUser) {
+        throw new AppError('An account with that email already exists', 409);
+    }
+
+    const [[{ totalUsers }]] = await db.query('SELECT COUNT(*) AS totalUsers FROM users');
+    let resolvedRoleId = role_id || null;
+
+    if (!resolvedRoleId) {
+        const [[adminRole]] = await db.query(`SELECT id FROM roles WHERE name = 'Administrator' LIMIT 1`);
+        resolvedRoleId = totalUsers === 0 ? adminRole?.id || null : null;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const [result] = await db.query('INSERT INTO users SET ?', [{
+        name: String(name).trim(),
+        email: normalizedEmail,
+        password_hash: passwordHash,
+        role_id: resolvedRoleId,
+        department_id: department_id || null,
+        status: 'Active'
+    }]);
+
+    if (resolvedRoleId) {
+        const [[role]] = await db.query('SELECT name FROM roles WHERE id = ? LIMIT 1', [resolvedRoleId]);
+        if (role?.name === 'Administrator') {
+            const [permissionRows] = await db.query('SELECT id FROM permissions');
+            if (permissionRows.length) {
+                const values = permissionRows.map((permission) => [result.insertId, permission.id]);
+                await db.query('INSERT IGNORE INTO user_permissions (user_id, permission_id) VALUES ?', [values]);
+            }
+        }
+    }
+
+    const authPayload = await createAuthResponse(result.insertId);
+    res.status(201).json(authPayload);
+}));
+
+app.post('/api/auth/login', asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+        throw new AppError('Email and password are required', 400);
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const [[user]] = await db.query(
+        'SELECT id, email, password_hash, status FROM users WHERE email = ? LIMIT 1',
+        [normalizedEmail]
+    );
+
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+        throw new AppError('Invalid email or password', 401);
+    }
+
+    if (user.status !== 'Active') {
+        throw new AppError(`This account is ${String(user.status).toLowerCase()}`, 403);
+    }
+
+    await db.query('UPDATE users SET last_login = NOW(), updated_at = NOW() WHERE id = ?', [user.id]);
+    const authPayload = await createAuthResponse(user.id);
+    res.json(authPayload);
+}));
+
+app.get('/api/auth/me', asyncHandler(async (req, res) => {
+    const token = getAuthTokenFromRequest(req);
+    const payload = verifyJwt(token, JWT_SECRET);
+    const authPayload = await createAuthResponse(payload.sub);
+    res.json(authPayload.user);
+}));
 
 // --- COMPANY ROUTES ---
 app.get('/api/companies', asyncHandler(async (req, res) => {
@@ -1390,6 +1706,968 @@ app.post('/api/company/:companyId/contracts', upload.single('file'), validateCom
     saved.value = Number(saved.value || 0);
     res.status(201).json(saved);
 }));
+
+// 14. GET Fixed Assets Register
+app.get('/api/company/:companyId/fixed-assets', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM fixed_assets WHERE company_id = ? ORDER BY acquisition_date DESC, created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatFixedAssetRecord);
+    const summary = {
+        totalAssets: records.length,
+        totalOriginalCost: records.reduce((sum, record) => sum + record.acquisition_cost, 0),
+        activeAssets: records.filter((record) => record.status === 'active').length,
+        retiredAssets: records.filter((record) => record.status !== 'active').length
+    };
+
+    res.json({ records, summary });
+}));
+
+// 15. POST Fixed Asset
+app.post('/api/company/:companyId/fixed-assets', validateCompany, asyncHandler(async (req, res) => {
+    const {
+        name,
+        category,
+        acquisition_date,
+        acquisition_cost,
+        depreciation_method,
+        useful_life_years,
+        residual_value,
+        location,
+        supplier,
+        status
+    } = req.body;
+
+    if (!name || !category || !acquisition_date || !acquisition_cost || !useful_life_years) {
+        throw new AppError('Name, category, acquisition date, acquisition cost, and useful life are required', 400);
+    }
+
+    const assetData = {
+        company_id: req.companyId,
+        name: name.trim(),
+        category: category.trim(),
+        acquisition_date,
+        acquisition_cost: toNumber(acquisition_cost),
+        depreciation_method: depreciation_method || 'straight_line',
+        useful_life_years: toNumber(useful_life_years),
+        residual_value: toNumber(residual_value),
+        location: location ? location.trim() : null,
+        supplier: supplier ? supplier.trim() : null,
+        status: status || 'active'
+    };
+
+    const [result] = await db.query('INSERT INTO fixed_assets SET ?', assetData);
+    const [[saved]] = await db.query('SELECT * FROM fixed_assets WHERE id = ?', [result.insertId]);
+    res.status(201).json(formatFixedAssetRecord(saved));
+}));
+
+// 16. PATCH Retire / Dispose Fixed Asset
+app.patch('/api/company/:companyId/fixed-assets/:assetId/retire', validateCompany, asyncHandler(async (req, res) => {
+    const { assetId } = req.params;
+    const { retirement_date, disposal_amount, status } = req.body;
+
+    const normalizedStatus =
+        disposal_amount !== undefined && disposal_amount !== null && disposal_amount !== ''
+            ? 'disposed'
+            : status || 'retired';
+
+    const [result] = await db.query(
+        `UPDATE fixed_assets
+         SET status = ?, retirement_date = ?, disposal_amount = ?, updated_at = NOW()
+         WHERE id = ? AND company_id = ?`,
+        [
+            normalizedStatus,
+            retirement_date || getTodayDate(),
+            disposal_amount === undefined || disposal_amount === null || disposal_amount === '' ? null : toNumber(disposal_amount),
+            assetId,
+            req.companyId
+        ]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Fixed asset not found', 404);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM fixed_assets WHERE id = ? AND company_id = ?', [assetId, req.companyId]);
+    res.json(formatFixedAssetRecord(saved));
+}));
+
+// 17. GET Client & Supplier Register
+app.get('/api/company/:companyId/client-suppliers', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM client_supplier_registers WHERE company_id = ? ORDER BY created_at DESC',
+        [req.companyId]
+    );
+
+    const summary = {
+        totalContacts: rows.length,
+        clients: rows.filter((record) => record.type === 'client').length,
+        suppliers: rows.filter((record) => record.type === 'supplier').length,
+        active: rows.filter((record) => record.status === 'Active').length
+    };
+
+    res.json({ records: rows, summary });
+}));
+
+// 18. POST Client / Supplier Register Entry
+app.post('/api/company/:companyId/client-suppliers', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
+    const {
+        name,
+        type,
+        category,
+        tax_id,
+        contact_person,
+        phone,
+        email,
+        status
+    } = req.body;
+
+    if (!name || !type || !category || !tax_id || !phone || !email) {
+        throw new AppError('Name, type, category, tax ID, phone, and email are required', 400);
+    }
+
+    const recordData = {
+        company_id: req.companyId,
+        name: name.trim(),
+        type: String(type).toLowerCase(),
+        category: String(category).toLowerCase(),
+        tax_id: tax_id.trim(),
+        contact_person: contact_person ? contact_person.trim() : null,
+        phone: phone.trim(),
+        email: email.trim().toLowerCase(),
+        agreement_file_name: req.file?.originalname || null,
+        agreement_file_path: normalizePath(req.file?.path),
+        status: status || 'Active'
+    };
+
+    const [result] = await db.query('INSERT INTO client_supplier_registers SET ?', recordData);
+    const [[saved]] = await db.query('SELECT * FROM client_supplier_registers WHERE id = ?', [result.insertId]);
+    res.status(201).json(saved);
+}));
+
+// 19. GET Tax Returns Register
+app.get('/api/company/:companyId/tax-returns', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM tax_returns WHERE company_id = ? ORDER BY due_date DESC, created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatTaxReturnRecord);
+    const summary = {
+        totalReturns: records.length,
+        filedReturns: records.filter((record) => record.status === 'Filed').length,
+        pendingReturns: records.filter((record) => record.status === 'Pending').length,
+        overdueReturns: records.filter((record) => record.status === 'Overdue').length,
+        totalDeclared: records.reduce((sum, record) => sum + record.total_declared, 0)
+    };
+
+    res.json({ records, summary });
+}));
+
+// 20. POST Tax Return Record
+app.post('/api/company/:companyId/tax-returns', validateCompany, asyncHandler(async (req, res) => {
+    const {
+        tax_type,
+        period,
+        submission_date,
+        total_declared,
+        status,
+        due_date,
+        quarter,
+        tax_year,
+        payload
+    } = req.body;
+
+    if (!tax_type || !period || !due_date) {
+        throw new AppError('Tax type, period, and due date are required', 400);
+    }
+    const normalizedStatus = resolveTaxReturnStatus(status, due_date, submission_date);
+    const recordData = {
+        company_id: req.companyId,
+        tax_type: String(tax_type).toUpperCase(),
+        period: String(period),
+        submission_date: normalizedStatus === 'Filed' ? submission_date || getTodayDate() : submission_date || null,
+        total_declared: toNumber(total_declared),
+        status: normalizedStatus,
+        due_date,
+        quarter: quarter || null,
+        tax_year: tax_year || null,
+        payload_json: payload ? JSON.stringify(payload) : null
+    };
+
+    const [existing] = await db.query(
+        `SELECT id
+         FROM tax_returns
+         WHERE company_id = ?
+           AND tax_type = ?
+           AND period = ?
+           AND COALESCE(quarter, '') = COALESCE(?, '')
+           AND COALESCE(tax_year, '') = COALESCE(?, '')
+         LIMIT 1`,
+        [req.companyId, recordData.tax_type, recordData.period, recordData.quarter, recordData.tax_year]
+    );
+
+    let savedId;
+
+    if (existing.length) {
+        savedId = existing[0].id;
+        await db.query('UPDATE tax_returns SET ? WHERE id = ? AND company_id = ?', [recordData, savedId, req.companyId]);
+    } else {
+        const [result] = await db.query('INSERT INTO tax_returns SET ?', recordData);
+        savedId = result.insertId;
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM tax_returns WHERE id = ? AND company_id = ?', [savedId, req.companyId]);
+    res.status(existing.length ? 200 : 201).json(formatTaxReturnRecord(saved));
+}));
+
+// 21. PATCH Mark Tax Return as Filed
+app.patch('/api/company/:companyId/tax-returns/:returnId/filed', validateCompany, asyncHandler(async (req, res) => {
+    const submissionDate = req.body.submission_date || getTodayDate();
+
+    const [result] = await db.query(
+        `UPDATE tax_returns
+         SET status = 'Filed', submission_date = ?, updated_at = NOW()
+         WHERE id = ? AND company_id = ?`,
+        [submissionDate, req.params.returnId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Tax return not found', 404);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM tax_returns WHERE id = ? AND company_id = ?', [req.params.returnId, req.companyId]);
+    res.json(formatTaxReturnRecord(saved));
+}));
+
+app.get('/api/company/:companyId/employees', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM employees WHERE company_id = ? ORDER BY created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatEmployeeRecord);
+    const summary = {
+        totalEmployees: records.length,
+        activeEmployees: records.filter((employee) => employee.status === 'active').length,
+        inactiveEmployees: records.filter((employee) => employee.status === 'inactive').length,
+        terminatedEmployees: records.filter((employee) => employee.status === 'terminated').length,
+        averageSalary: records.length
+            ? records.reduce((sum, employee) => sum + employee.gross_salary, 0) / records.length
+            : 0
+    };
+
+    res.json({ records, summary });
+}));
+
+app.post('/api/company/:companyId/employees', upload.single('contract'), validateCompany, asyncHandler(async (req, res) => {
+    const {
+        full_name,
+        email,
+        phone,
+        national_id,
+        position,
+        department,
+        start_date,
+        gross_salary,
+        rssb_number,
+        status
+    } = req.body;
+
+    if (!full_name || !national_id || !position || !department || !start_date || gross_salary === undefined) {
+        throw new AppError('Full name, national ID, position, department, start date, and gross salary are required', 400);
+    }
+
+    const employeeData = {
+        company_id: req.companyId,
+        full_name: String(full_name).trim(),
+        email: email ? String(email).trim().toLowerCase() : null,
+        phone: phone ? String(phone).trim() : null,
+        national_id: String(national_id).trim(),
+        position: String(position).trim(),
+        department: String(department).trim(),
+        start_date,
+        gross_salary: toNumber(gross_salary),
+        rssb_number: rssb_number ? String(rssb_number).trim() : null,
+        status: status || 'active',
+        contract_file_name: req.file?.originalname || null,
+        contract_file_path: normalizePath(req.file?.path)
+    };
+
+    const [result] = await db.query('INSERT INTO employees SET ?', employeeData);
+    const [[saved]] = await db.query('SELECT * FROM employees WHERE id = ? AND company_id = ?', [result.insertId, req.companyId]);
+    res.status(201).json(formatEmployeeRecord(saved));
+}));
+
+app.put('/api/company/:companyId/employees/:employeeId', upload.single('contract'), validateCompany, asyncHandler(async (req, res) => {
+    const [[existing]] = await db.query(
+        'SELECT contract_file_path FROM employees WHERE id = ? AND company_id = ?',
+        [req.params.employeeId, req.companyId]
+    );
+
+    if (!existing) {
+        throw new AppError('Employee not found', 404);
+    }
+
+    const updateData = {
+        ...(req.body.full_name && { full_name: String(req.body.full_name).trim() }),
+        ...(req.body.email !== undefined && { email: req.body.email ? String(req.body.email).trim().toLowerCase() : null }),
+        ...(req.body.phone !== undefined && { phone: req.body.phone ? String(req.body.phone).trim() : null }),
+        ...(req.body.national_id && { national_id: String(req.body.national_id).trim() }),
+        ...(req.body.position && { position: String(req.body.position).trim() }),
+        ...(req.body.department && { department: String(req.body.department).trim() }),
+        ...(req.body.start_date && { start_date: req.body.start_date }),
+        ...(req.body.gross_salary !== undefined && { gross_salary: toNumber(req.body.gross_salary) }),
+        ...(req.body.rssb_number !== undefined && { rssb_number: req.body.rssb_number ? String(req.body.rssb_number).trim() : null }),
+        ...(req.body.status && { status: req.body.status }),
+        ...(req.file && {
+            contract_file_name: req.file.originalname,
+            contract_file_path: normalizePath(req.file.path)
+        })
+    };
+
+    await db.query('UPDATE employees SET ?, updated_at = NOW() WHERE id = ? AND company_id = ?', [
+        updateData,
+        req.params.employeeId,
+        req.companyId
+    ]);
+
+    if (req.file && existing.contract_file_path) {
+        await safeDelete(existing.contract_file_path);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM employees WHERE id = ? AND company_id = ?', [req.params.employeeId, req.companyId]);
+    res.json(formatEmployeeRecord(saved));
+}));
+
+app.patch('/api/company/:companyId/employees/:employeeId/status', validateCompany, asyncHandler(async (req, res) => {
+    const { status } = req.body;
+    if (!['active', 'inactive', 'terminated'].includes(status)) {
+        throw new AppError('Invalid employee status', 400);
+    }
+
+    const [result] = await db.query(
+        'UPDATE employees SET status = ?, updated_at = NOW() WHERE id = ? AND company_id = ?',
+        [status, req.params.employeeId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Employee not found', 404);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM employees WHERE id = ? AND company_id = ?', [req.params.employeeId, req.companyId]);
+    res.json(formatEmployeeRecord(saved));
+}));
+
+app.get('/api/company/:companyId/payroll-records', validateCompany, asyncHandler(async (req, res) => {
+    const params = [req.companyId];
+    let sql = `
+        SELECT
+            pr.*,
+            e.full_name AS employee_full_name,
+            e.email AS employee_email,
+            e.phone AS employee_phone,
+            e.national_id AS employee_national_id,
+            e.position AS employee_position,
+            e.department AS employee_department,
+            e.start_date AS employee_start_date,
+            e.gross_salary AS employee_gross_salary,
+            e.rssb_number AS employee_rssb_number,
+            e.status AS employee_status,
+            e.contract_file_name AS employee_contract_file_name,
+            e.contract_file_path AS employee_contract_file_path
+        FROM payroll_records pr
+        JOIN employees e ON e.id = pr.employee_id
+        WHERE pr.company_id = ?
+    `;
+
+    if (req.query.month) {
+        sql += ' AND pr.payroll_month = ?';
+        params.push(req.query.month);
+    }
+
+    sql += ' ORDER BY pr.payroll_month DESC, e.full_name ASC';
+
+    const [rows] = await db.query(sql, params);
+    const records = rows.map(formatPayrollRecord);
+    const summary = {
+        totalEmployees: records.length,
+        totalGrossPay: records.reduce((sum, record) => sum + record.gross_salary, 0),
+        totalPaye: records.reduce((sum, record) => sum + record.paye_tax, 0),
+        totalRssbEmployee: records.reduce((sum, record) => sum + record.rssb_employee, 0),
+        totalRssbEmployer: records.reduce((sum, record) => sum + record.rssb_employer, 0),
+        totalNetPay: records.reduce((sum, record) => sum + record.net_salary, 0),
+        paidCount: records.filter((record) => record.status === 'paid').length,
+        unpaidCount: records.filter((record) => record.status === 'unpaid').length
+    };
+
+    res.json({ records, summary });
+}));
+
+app.post('/api/company/:companyId/payroll-records/generate', validateCompany, asyncHandler(async (req, res) => {
+    const payrollMonth = String(req.body.payroll_month || '').trim();
+    const payDate = req.body.pay_date || getTodayDate();
+
+    if (!/^\d{4}-\d{2}$/.test(payrollMonth)) {
+        throw new AppError('Payroll month must be in YYYY-MM format', 400);
+    }
+
+    const [employees] = await db.query(
+        `SELECT *
+         FROM employees
+         WHERE company_id = ? AND status = 'active'
+         ORDER BY full_name ASC`,
+        [req.companyId]
+    );
+
+    if (!employees.length) {
+        throw new AppError('No active employees found for payroll generation', 400);
+    }
+
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        for (const employee of employees) {
+            const paye = calculatePaye(employee.gross_salary);
+            const rssb = calculateRssb(employee.gross_salary);
+            const grossSalary = toNumber(employee.gross_salary);
+            const netSalary = grossSalary - paye - rssb.employee;
+
+            const existingValues = {
+                pay_date: payDate,
+                gross_salary: grossSalary,
+                paye_tax: paye,
+                rssb_employee: rssb.employee,
+                rssb_employer: rssb.employer,
+                net_salary: netSalary,
+                status: 'unpaid',
+                paid_at: null
+            };
+
+            const [existingRows] = await connection.query(
+                'SELECT id FROM payroll_records WHERE company_id = ? AND employee_id = ? AND payroll_month = ? LIMIT 1',
+                [req.companyId, employee.id, payrollMonth]
+            );
+
+            if (existingRows.length) {
+                await connection.query(
+                    'UPDATE payroll_records SET ?, updated_at = NOW() WHERE id = ?',
+                    [existingValues, existingRows[0].id]
+                );
+            } else {
+                await connection.query('INSERT INTO payroll_records SET ?', {
+                    company_id: req.companyId,
+                    employee_id: employee.id,
+                    payroll_month: payrollMonth,
+                    ...existingValues
+                });
+            }
+        }
+
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+
+    const [rows] = await db.query(`
+        SELECT
+            pr.*,
+            e.full_name AS employee_full_name,
+            e.email AS employee_email,
+            e.phone AS employee_phone,
+            e.national_id AS employee_national_id,
+            e.position AS employee_position,
+            e.department AS employee_department,
+            e.start_date AS employee_start_date,
+            e.gross_salary AS employee_gross_salary,
+            e.rssb_number AS employee_rssb_number,
+            e.status AS employee_status,
+            e.contract_file_name AS employee_contract_file_name,
+            e.contract_file_path AS employee_contract_file_path
+        FROM payroll_records pr
+        JOIN employees e ON e.id = pr.employee_id
+        WHERE pr.company_id = ? AND pr.payroll_month = ?
+        ORDER BY e.full_name ASC
+    `, [req.companyId, payrollMonth]);
+
+    const records = rows.map(formatPayrollRecord);
+    const summary = {
+        month: payrollMonth,
+        totalEmployees: records.length,
+        totalGrossPay: records.reduce((sum, record) => sum + record.gross_salary, 0),
+        totalPaye: records.reduce((sum, record) => sum + record.paye_tax, 0),
+        totalRssbEmployee: records.reduce((sum, record) => sum + record.rssb_employee, 0),
+        totalRssbEmployer: records.reduce((sum, record) => sum + record.rssb_employer, 0),
+        totalNetPay: records.reduce((sum, record) => sum + record.net_salary, 0),
+        paidCount: records.filter((record) => record.status === 'paid').length,
+        unpaidCount: records.filter((record) => record.status === 'unpaid').length
+    };
+
+    res.status(201).json({ records, summary });
+}));
+
+app.patch('/api/company/:companyId/payroll-records/:payrollId/paid', validateCompany, asyncHandler(async (req, res) => {
+    const [result] = await db.query(
+        `UPDATE payroll_records
+         SET status = 'paid', paid_at = NOW(), updated_at = NOW()
+         WHERE id = ? AND company_id = ?`,
+        [req.params.payrollId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Payroll record not found', 404);
+    }
+
+    const [[row]] = await db.query(`
+        SELECT
+            pr.*,
+            e.full_name AS employee_full_name,
+            e.email AS employee_email,
+            e.phone AS employee_phone,
+            e.national_id AS employee_national_id,
+            e.position AS employee_position,
+            e.department AS employee_department,
+            e.start_date AS employee_start_date,
+            e.gross_salary AS employee_gross_salary,
+            e.rssb_number AS employee_rssb_number,
+            e.status AS employee_status,
+            e.contract_file_name AS employee_contract_file_name,
+            e.contract_file_path AS employee_contract_file_path
+        FROM payroll_records pr
+        JOIN employees e ON e.id = pr.employee_id
+        WHERE pr.id = ? AND pr.company_id = ?
+        LIMIT 1
+    `, [req.params.payrollId, req.companyId]);
+
+    res.json(formatPayrollRecord(row));
+}));
+
+app.get('/api/company/:companyId/internal-audit-reports', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM internal_audit_reports WHERE company_id = ? ORDER BY created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatAuditReportRecord);
+    const summary = {
+        totalReports: records.length,
+        completed: records.filter((record) => record.status === 'Completed').length,
+        inProgress: records.filter((record) => record.status === 'In Progress').length,
+        totalFindings: records.reduce((sum, record) => sum + record.findings_count, 0)
+    };
+
+    res.json({ records, summary });
+}));
+
+app.post('/api/company/:companyId/internal-audit-reports', upload.single('attachment'), validateCompany, asyncHandler(async (req, res) => {
+    const {
+        title,
+        audit_type,
+        auditor,
+        audited_period,
+        report_date,
+        status,
+        findings_count,
+        description,
+        recommendations
+    } = req.body;
+
+    if (!title || !audit_type || !auditor || !audited_period) {
+        throw new AppError('Title, audit type, auditor, and audited period are required', 400);
+    }
+
+    const [result] = await db.query('INSERT INTO internal_audit_reports SET ?', {
+        company_id: req.companyId,
+        title: String(title).trim(),
+        audit_type: String(audit_type).trim(),
+        auditor: String(auditor).trim(),
+        audited_period: String(audited_period).trim(),
+        report_date: report_date || null,
+        status: status || 'Scheduled',
+        findings_count: Number(findings_count || 0),
+        description: description || null,
+        recommendations: recommendations || null,
+        attachment_file_name: req.file?.originalname || null,
+        attachment_file_path: normalizePath(req.file?.path)
+    });
+
+    const [[saved]] = await db.query('SELECT * FROM internal_audit_reports WHERE id = ? AND company_id = ?', [result.insertId, req.companyId]);
+    res.status(201).json(formatAuditReportRecord(saved));
+}));
+
+app.put('/api/company/:companyId/internal-audit-reports/:reportId', upload.single('attachment'), validateCompany, asyncHandler(async (req, res) => {
+    const [[existing]] = await db.query(
+        'SELECT attachment_file_path FROM internal_audit_reports WHERE id = ? AND company_id = ?',
+        [req.params.reportId, req.companyId]
+    );
+
+    if (!existing) {
+        throw new AppError('Audit report not found', 404);
+    }
+
+    await db.query('UPDATE internal_audit_reports SET ?, updated_at = NOW() WHERE id = ? AND company_id = ?', [{
+        ...(req.body.title && { title: String(req.body.title).trim() }),
+        ...(req.body.audit_type && { audit_type: String(req.body.audit_type).trim() }),
+        ...(req.body.auditor && { auditor: String(req.body.auditor).trim() }),
+        ...(req.body.audited_period && { audited_period: String(req.body.audited_period).trim() }),
+        ...(req.body.report_date !== undefined && { report_date: req.body.report_date || null }),
+        ...(req.body.status && { status: req.body.status }),
+        ...(req.body.findings_count !== undefined && { findings_count: Number(req.body.findings_count || 0) }),
+        ...(req.body.description !== undefined && { description: req.body.description || null }),
+        ...(req.body.recommendations !== undefined && { recommendations: req.body.recommendations || null }),
+        ...(req.file && {
+            attachment_file_name: req.file.originalname,
+            attachment_file_path: normalizePath(req.file.path)
+        })
+    }, req.params.reportId, req.companyId]);
+
+    if (req.file && existing.attachment_file_path) {
+        await safeDelete(existing.attachment_file_path);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM internal_audit_reports WHERE id = ? AND company_id = ?', [req.params.reportId, req.companyId]);
+    res.json(formatAuditReportRecord(saved));
+}));
+
+app.delete('/api/company/:companyId/internal-audit-reports/:reportId', validateCompany, asyncHandler(async (req, res) => {
+    const [[existing]] = await db.query(
+        'SELECT attachment_file_path FROM internal_audit_reports WHERE id = ? AND company_id = ?',
+        [req.params.reportId, req.companyId]
+    );
+
+    if (!existing) {
+        throw new AppError('Audit report not found', 404);
+    }
+
+    await db.query('DELETE FROM internal_audit_reports WHERE id = ? AND company_id = ?', [req.params.reportId, req.companyId]);
+    await safeDelete(existing.attachment_file_path);
+    res.json({ success: true });
+}));
+
+app.get('/api/company/:companyId/complaint-risk-issues', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM complaint_risk_issues WHERE company_id = ? ORDER BY reported_date DESC, created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatComplaintRiskRecord);
+    const summary = {
+        totalIssues: records.length,
+        openIssues: records.filter((record) => record.status === 'Open').length,
+        inProgressIssues: records.filter((record) => record.status === 'In Progress').length,
+        resolvedIssues: records.filter((record) => record.status === 'Resolved').length
+    };
+
+    res.json({ records, summary });
+}));
+
+app.post('/api/company/:companyId/complaint-risk-issues', validateCompany, asyncHandler(async (req, res) => {
+    const {
+        title,
+        category,
+        description,
+        reported_date,
+        assigned_to,
+        priority,
+        status,
+        deadline
+    } = req.body;
+
+    if (!title || !category || !description) {
+        throw new AppError('Title, category, and description are required', 400);
+    }
+
+    const [result] = await db.query('INSERT INTO complaint_risk_issues SET ?', {
+        company_id: req.companyId,
+        title: String(title).trim(),
+        category: String(category).trim(),
+        description: String(description).trim(),
+        reported_date: reported_date || getTodayDate(),
+        assigned_to: assigned_to ? String(assigned_to).trim() : null,
+        priority: priority || 'Medium',
+        status: status || 'Open',
+        deadline: deadline || null
+    });
+
+    const [[saved]] = await db.query('SELECT * FROM complaint_risk_issues WHERE id = ? AND company_id = ?', [result.insertId, req.companyId]);
+    res.status(201).json(formatComplaintRiskRecord(saved));
+}));
+
+app.put('/api/company/:companyId/complaint-risk-issues/:issueId', validateCompany, asyncHandler(async (req, res) => {
+    const [result] = await db.query('UPDATE complaint_risk_issues SET ?, updated_at = NOW() WHERE id = ? AND company_id = ?', [{
+        ...(req.body.title && { title: String(req.body.title).trim() }),
+        ...(req.body.category && { category: String(req.body.category).trim() }),
+        ...(req.body.description && { description: String(req.body.description).trim() }),
+        ...(req.body.reported_date && { reported_date: req.body.reported_date }),
+        ...(req.body.assigned_to !== undefined && { assigned_to: req.body.assigned_to ? String(req.body.assigned_to).trim() : null }),
+        ...(req.body.priority && { priority: req.body.priority }),
+        ...(req.body.status && { status: req.body.status }),
+        ...(req.body.deadline !== undefined && { deadline: req.body.deadline || null })
+    }, req.params.issueId, req.companyId]);
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Issue not found', 404);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM complaint_risk_issues WHERE id = ? AND company_id = ?', [req.params.issueId, req.companyId]);
+    res.json(formatComplaintRiskRecord(saved));
+}));
+
+app.delete('/api/company/:companyId/complaint-risk-issues/:issueId', validateCompany, asyncHandler(async (req, res) => {
+    const [result] = await db.query(
+        'DELETE FROM complaint_risk_issues WHERE id = ? AND company_id = ?',
+        [req.params.issueId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Issue not found', 404);
+    }
+
+    res.json({ success: true });
+}));
+
+app.get('/api/company/:companyId/compliance-alerts', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM compliance_alerts WHERE company_id = ? ORDER BY due_date ASC, created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatComplianceAlertRecord);
+    const summary = {
+        total: records.length,
+        active: records.filter((record) => record.status === 'active').length,
+        acknowledged: records.filter((record) => record.status === 'acknowledged').length,
+        resolved: records.filter((record) => record.status === 'resolved').length,
+        highPriority: records.filter((record) => record.severity === 'high' && record.status === 'active').length
+    };
+
+    res.json({ records, summary });
+}));
+
+app.post('/api/company/:companyId/compliance-alerts', validateCompany, asyncHandler(async (req, res) => {
+    const {
+        title,
+        description,
+        type,
+        severity,
+        status,
+        alert_date,
+        due_date,
+        for_roles,
+        is_read,
+        created_by,
+        source,
+        action_required,
+        snoozed_until
+    } = req.body;
+
+    if (!title || !description || !due_date) {
+        throw new AppError('Title, description, and due date are required', 400);
+    }
+
+    const [result] = await db.query('INSERT INTO compliance_alerts SET ?', {
+        company_id: req.companyId,
+        title: String(title).trim(),
+        description: String(description).trim(),
+        type: type || 'custom',
+        severity: severity || 'medium',
+        status: status || 'active',
+        alert_date: alert_date || getTodayDate(),
+        due_date,
+        for_roles_json: JSON.stringify(parseRolesValue(for_roles)),
+        is_read: is_read ? 1 : 0,
+        created_by: created_by || null,
+        source: source || 'manual',
+        action_required: action_required || null,
+        snoozed_until: snoozed_until || null
+    });
+
+    const [[saved]] = await db.query('SELECT * FROM compliance_alerts WHERE id = ? AND company_id = ?', [result.insertId, req.companyId]);
+    res.status(201).json(formatComplianceAlertRecord(saved));
+}));
+
+app.patch('/api/company/:companyId/compliance-alerts/:alertId/status', validateCompany, asyncHandler(async (req, res) => {
+    const { status, snoozed_until, is_read } = req.body;
+    if (!['active', 'acknowledged', 'resolved', 'snoozed'].includes(status)) {
+        throw new AppError('Invalid alert status', 400);
+    }
+
+    const [result] = await db.query(
+        'UPDATE compliance_alerts SET status = ?, snoozed_until = ?, is_read = ?, updated_at = NOW() WHERE id = ? AND company_id = ?',
+        [status, snoozed_until || null, is_read ? 1 : 0, req.params.alertId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Alert not found', 404);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM compliance_alerts WHERE id = ? AND company_id = ?', [req.params.alertId, req.companyId]);
+    res.json(formatComplianceAlertRecord(saved));
+}));
+
+app.get('/api/company/:companyId/compliance-calendar', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM compliance_deadlines WHERE company_id = ? ORDER BY due_date ASC, created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatComplianceDeadlineRecord);
+    const summary = {
+        total: records.length,
+        highPriority: records.filter((record) => record.priority === 'high').length,
+        mediumPriority: records.filter((record) => record.priority === 'medium').length,
+        completed: records.filter((record) => record.status === 'completed').length,
+        overdue: records.filter((record) => record.status === 'overdue').length
+    };
+
+    res.json({ records, summary });
+}));
+
+app.post('/api/company/:companyId/compliance-calendar', validateCompany, asyncHandler(async (req, res) => {
+    const { task, due_date, priority, department, description, status, reminder_days } = req.body;
+    if (!task || !due_date || !department) {
+        throw new AppError('Task, due date, and department are required', 400);
+    }
+
+    const [result] = await db.query('INSERT INTO compliance_deadlines SET ?', {
+        company_id: req.companyId,
+        task: String(task).trim(),
+        due_date,
+        priority: priority || 'medium',
+        department: String(department).trim(),
+        description: description || null,
+        status: resolveDeadlineStatus(status, due_date),
+        reminder_days: Number(reminder_days || 3)
+    });
+
+    const [[saved]] = await db.query('SELECT * FROM compliance_deadlines WHERE id = ? AND company_id = ?', [result.insertId, req.companyId]);
+    res.status(201).json(formatComplianceDeadlineRecord(saved));
+}));
+
+app.put('/api/company/:companyId/compliance-calendar/:deadlineId', validateCompany, asyncHandler(async (req, res) => {
+    const dueDate = req.body.due_date;
+    const resolvedStatus = req.body.status ? resolveDeadlineStatus(req.body.status, dueDate) : undefined;
+    const [result] = await db.query('UPDATE compliance_deadlines SET ?, updated_at = NOW() WHERE id = ? AND company_id = ?', [{
+        ...(req.body.task && { task: String(req.body.task).trim() }),
+        ...(req.body.due_date && { due_date: req.body.due_date }),
+        ...(req.body.priority && { priority: req.body.priority }),
+        ...(req.body.department && { department: String(req.body.department).trim() }),
+        ...(req.body.description !== undefined && { description: req.body.description || null }),
+        ...(resolvedStatus && { status: resolvedStatus }),
+        ...(req.body.reminder_days !== undefined && { reminder_days: Number(req.body.reminder_days || 3) })
+    }, req.params.deadlineId, req.companyId]);
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Deadline not found', 404);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM compliance_deadlines WHERE id = ? AND company_id = ?', [req.params.deadlineId, req.companyId]);
+    res.json(formatComplianceDeadlineRecord(saved));
+}));
+
+app.delete('/api/company/:companyId/compliance-calendar/:deadlineId', validateCompany, asyncHandler(async (req, res) => {
+    const [result] = await db.query(
+        'DELETE FROM compliance_deadlines WHERE id = ? AND company_id = ?',
+        [req.params.deadlineId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Deadline not found', 404);
+    }
+
+    res.json({ success: true });
+}));
+
+app.get('/api/company/:companyId/document-vault', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM document_vault WHERE company_id = ? ORDER BY created_at DESC',
+        [req.companyId]
+    );
+
+    const records = rows.map(formatDocumentVaultRecord);
+    const summary = {
+        totalDocuments: records.length,
+        securedDocuments: records.filter((record) => record.secured).length,
+        categories: new Set(records.map((record) => record.category)).size
+    };
+
+    res.json({ records, summary });
+}));
+
+app.post('/api/company/:companyId/document-vault', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
+    const { title, category, description, date_issued, access_role, uploaded_by, file_type } = req.body;
+    if (!title || !category || !req.file) {
+        throw new AppError('Title, category, and file are required', 400);
+    }
+
+    const [result] = await db.query('INSERT INTO document_vault SET ?', {
+        company_id: req.companyId,
+        title: String(title).trim(),
+        category: String(category).trim(),
+        description: description || null,
+        date_issued: date_issued || null,
+        access_role: access_role || 'all',
+        file_name: req.file.originalname,
+        file_path: normalizePath(req.file.path),
+        file_size: Number(req.file.size || 0),
+        uploaded_by: uploaded_by || null,
+        secured: access_role && access_role !== 'all' ? 1 : 0,
+        file_type: file_type || req.file.mimetype || null
+    });
+
+    const [[saved]] = await db.query('SELECT * FROM document_vault WHERE id = ? AND company_id = ?', [result.insertId, req.companyId]);
+    res.status(201).json(formatDocumentVaultRecord(saved));
+}));
+
+app.delete('/api/company/:companyId/document-vault/:documentId', validateCompany, asyncHandler(async (req, res) => {
+    const [[existing]] = await db.query(
+        'SELECT file_path FROM document_vault WHERE id = ? AND company_id = ?',
+        [req.params.documentId, req.companyId]
+    );
+
+    if (!existing) {
+        throw new AppError('Document not found', 404);
+    }
+
+    await db.query('DELETE FROM document_vault WHERE id = ? AND company_id = ?', [req.params.documentId, req.companyId]);
+    await safeDelete(existing.file_path);
+    res.json({ success: true });
+}));
+
+app.get('/api/company/:companyId/settings', validateCompany, asyncHandler(async (req, res) => {
+    const [[settings]] = await db.query(
+        'SELECT * FROM company_settings WHERE company_id = ? LIMIT 1',
+        [req.companyId]
+    );
+
+    res.json(buildSettingsResponse(settings));
+}));
+
+app.put('/api/company/:companyId/settings', validateCompany, asyncHandler(async (req, res) => {
+    const payload = {
+        company_id: req.companyId,
+        general_json: JSON.stringify(req.body.general || defaultCompanySettings().general),
+        notifications_json: JSON.stringify(req.body.notifications || defaultCompanySettings().notifications),
+        security_json: JSON.stringify(req.body.security || defaultCompanySettings().security),
+        integrations_json: JSON.stringify(req.body.integrations || defaultCompanySettings().integrations)
+    };
+
+    const [existing] = await db.query('SELECT id FROM company_settings WHERE company_id = ? LIMIT 1', [req.companyId]);
+    if (existing.length) {
+        await db.query('UPDATE company_settings SET ?, updated_at = NOW() WHERE company_id = ?', [payload, req.companyId]);
+    } else {
+        await db.query('INSERT INTO company_settings SET ?', payload);
+    }
+
+    const [[saved]] = await db.query('SELECT * FROM company_settings WHERE company_id = ? LIMIT 1', [req.companyId]);
+    res.json(buildSettingsResponse(saved));
+}));
 // ==========================================
 // --- ROLES ROUTES ---
 // ==========================================
@@ -1473,6 +2751,15 @@ app.post('/api/permissions', asyncHandler(async (req, res) => {
     const [result] = await db.query('INSERT INTO permissions SET ?', [{ name: name.trim() }]);
     const [[perm]] = await db.query('SELECT * FROM permissions WHERE id = ?', [result.insertId]);
     res.status(201).json(perm);
+}));
+
+app.put('/api/permissions/:id', asyncHandler(async (req, res) => {
+    const { name } = req.body;
+    if (!name) throw new AppError('Permission name is required', 400);
+    const [result] = await db.query('UPDATE permissions SET name = ? WHERE id = ?', [name.trim(), req.params.id]);
+    if (result.affectedRows === 0) throw new AppError('Permission not found', 404);
+    const [[perm]] = await db.query('SELECT * FROM permissions WHERE id = ?', [req.params.id]);
+    res.json(perm);
 }));
 
 app.delete('/api/permissions/:id', asyncHandler(async (req, res) => {
@@ -1605,6 +2892,34 @@ app.delete('/api/users/:id', asyncHandler(async (req, res) => {
     await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'User deleted successfully' });
 }));
+
+app.use(async (err, req, res, next) => {
+    if (req.file) await safeDelete(req.file.path);
+    let statusCode = err.statusCode || 500;
+    let message = err.message || 'Internal Server Error';
+
+    if (err.code === 'ER_DUP_ENTRY') { statusCode = 409; message = 'Unique record already exists.'; }
+    else if (err.code === 'ER_BAD_FIELD_ERROR') { statusCode = 400; message = 'Invalid data field.'; }
+
+    console.error(`[Error] ${statusCode} - ${err.message}`);
+    res.status(statusCode).json({
+        success: false,
+        error: message,
+        ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    });
+});
+
 app.use((req, res) => { res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found` }); });
 
-app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+const startServer = async () => {
+    try {
+        await verifyDatabaseConnection();
+        await runMigrations(db);
+        app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+    } catch (error) {
+        console.error('Failed to start server:', error.message);
+        process.exit(1);
+    }
+};
+
+startServer();

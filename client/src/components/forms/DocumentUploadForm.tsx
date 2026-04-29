@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Upload, FileText, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import DocumentVaultService from "@/services/documentVaultService";
+import AuthService from "@/services/authService";
 
 const DOCUMENT_CATEGORIES = [
   { value: "rdb-registration", label: "RDB Registration" },
@@ -74,29 +76,17 @@ export function DocumentUploadForm({ onClose, onSuccess }: DocumentUploadFormPro
     setIsUploading(true);
 
     try {
-      // Simulate file upload delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Create new document entry
-      const newDocument = {
-        id: Date.now(),
+      const currentUser = AuthService.getUser();
+      await DocumentVaultService.upload({
         title: formData.title,
         category: formData.category,
-        description: formData.description,
-        dateIssued: formData.dateIssued,
+        description: formData.description || undefined,
+        dateIssued: formData.dateIssued || undefined,
         accessRole: formData.accessRole || "all",
-        fileName: formData.file.name,
-        fileSize: formData.file.size,
-        uploadedBy: "Current User",
-        uploadedAt: new Date().toISOString(),
-        secured: formData.accessRole !== "all",
-        type: getDocumentType(formData.file.name)
-      };
-
-      // Store in localStorage
-      const existingDocs = JSON.parse(localStorage.getItem('documents') || '[]');
-      existingDocs.push(newDocument);
-      localStorage.setItem('documents', JSON.stringify(existingDocs));
+        uploadedBy: currentUser?.name || "Current User",
+        fileType: getDocumentType(formData.file.name),
+        file: formData.file,
+      });
 
       toast({
         title: "Document Uploaded",

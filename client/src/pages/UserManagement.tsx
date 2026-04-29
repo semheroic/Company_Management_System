@@ -16,8 +16,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "react-router-dom";
+import { API_BASE as ROOT_API_BASE } from "@/services/companyApi";
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = `${ROOT_API_BASE}/api`;
 const api = axios.create({ baseURL: API_BASE });
 
 export default function UserManagement() {

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Calculator, Download, Users } from "lucide-react";
-import PayrollService, { PayrollRecord, PayrollSummary } from "@/services/payrollService";
+import PayrollRegisterService, { PayrollRecord, PayrollSummary } from "@/services/payrollRegisterService";
 import UniversalTransactionService from "@/services/universalTransactionService";
 
 interface PayrollFormProps {
@@ -34,15 +34,14 @@ export function PayrollForm({ open, onClose, onSuccess }: PayrollFormProps) {
 
     setIsGenerating(true);
     try {
-      const payrollRecords = PayrollService.generatePayroll(month);
-      const summary = PayrollService.getPayrollSummary(month);
+      const response = await PayrollRegisterService.generate(month);
       
-      setGeneratedPayroll(payrollRecords);
-      setPayrollSummary(summary);
+      setGeneratedPayroll(response.records);
+      setPayrollSummary(response.summary);
       
       toast({
         title: "Payroll Generated",
-        description: `Payroll for ${month} has been generated successfully for ${payrollRecords.length} employees`
+        description: `Payroll for ${month} has been generated successfully for ${response.records.length} employees`
       });
       
     } catch (error) {
@@ -65,13 +64,13 @@ export function PayrollForm({ open, onClose, onSuccess }: PayrollFormProps) {
       for (const record of generatedPayroll) {
         UniversalTransactionService.createTransaction({
           type: 'salary',
-          amount: record.grossSalary + record.rssbEmployer, // Total cost to company
+          amount: record.grossSalary + record.rssbEmployer,
           payment_method: 'bank',
-          description: `Salary Payment - ${record.employee.fullName} - ${month}`,
+          description: `Salary Payment - ${record.employee?.fullName || "Employee"} - ${month}`,
           date: new Date().toISOString().split('T')[0],
-          reference_number: `PAY-${month}-${record.employee.id}`,
-          employee_id: record.employee.id.toString(),
-          employee_name: record.employee.fullName,
+          reference_number: `PAY-${month}-${record.employee?.id || record.employeeId}`,
+          employee_id: String(record.employee?.id || record.employeeId),
+          employee_name: record.employee?.fullName || "",
           gross_salary: record.grossSalary,
           paye_deduction: record.paye,
           rssb_employee: record.rssbEmployee,
@@ -101,7 +100,7 @@ export function PayrollForm({ open, onClose, onSuccess }: PayrollFormProps) {
   const handleDownloadPayroll = () => {
     if (!generatedPayroll || !month) return;
     
-    const csvData = PayrollService.exportPayrollToCSV(month);
+    const csvData = PayrollRegisterService.exportToCSV(generatedPayroll);
     const blob = new Blob([csvData], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -131,7 +130,7 @@ export function PayrollForm({ open, onClose, onSuccess }: PayrollFormProps) {
   };
 
   const formatCurrency = (amount: number): string => {
-    return PayrollService.formatCurrency(amount);
+    return PayrollRegisterService.formatCurrency(amount);
   };
 
   return (
@@ -248,12 +247,12 @@ export function PayrollForm({ open, onClose, onSuccess }: PayrollFormProps) {
                     {generatedPayroll.map((record) => (
                       <tr key={record.id} className="border-b hover:bg-gray-50">
                         <td className="p-3">
-                          <div>
-                            <div className="font-medium">{record.employee.fullName}</div>
-                            <div className="text-gray-500">{record.employee.email}</div>
+                            <div>
+                            <div className="font-medium">{record.employee?.fullName || "Employee"}</div>
+                            <div className="text-gray-500">{record.employee?.email || "No email"}</div>
                           </div>
                         </td>
-                        <td className="p-3">{record.employee.position}</td>
+                        <td className="p-3">{record.employee?.position || "-"}</td>
                         <td className="p-3 text-right">{formatCurrency(record.grossSalary)}</td>
                         <td className="p-3 text-right">{formatCurrency(record.paye)}</td>
                         <td className="p-3 text-right">{formatCurrency(record.rssbEmployee)}</td>

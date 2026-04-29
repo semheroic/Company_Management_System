@@ -6,32 +6,80 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import EmployeeRecordsService, { EmployeeRecord } from "@/services/employeeRecordsService";
 
 interface EmployeeFormProps {
   open: boolean;
   onClose: () => void;
+  onSuccess?: (employee: EmployeeRecord) => void;
 }
 
-export function EmployeeForm({ open, onClose }: EmployeeFormProps) {
+export function EmployeeForm({ open, onClose, onSuccess }: EmployeeFormProps) {
   const { toast } = useToast();
   const [formData, setFormData] = useState({
     fullName: "",
+    email: "",
+    phone: "",
     nationalId: "",
     position: "",
     department: "",
     grossSalary: "",
     startDate: "",
+    rssbNumber: "",
     contract: null as File | null
   });
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log("Employee data:", formData);
-    toast({
-      title: "Success",
-      description: "Employee added successfully"
+  const resetForm = () => {
+    setFormData({
+      fullName: "",
+      email: "",
+      phone: "",
+      nationalId: "",
+      position: "",
+      department: "",
+      grossSalary: "",
+      startDate: "",
+      rssbNumber: "",
+      contract: null,
     });
-    onClose();
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+
+    try {
+      const employee = await EmployeeRecordsService.create({
+        fullName: formData.fullName,
+        email: formData.email || undefined,
+        phone: formData.phone || undefined,
+        nationalId: formData.nationalId,
+        position: formData.position,
+        department: formData.department,
+        grossSalary: Number(formData.grossSalary || 0),
+        startDate: formData.startDate,
+        rssbNumber: formData.rssbNumber || undefined,
+        contract: formData.contract,
+      });
+
+      toast({
+        title: "Success",
+        description: "Employee added successfully",
+      });
+      onSuccess?.(employee);
+      resetForm();
+      onClose();
+    } catch (error) {
+      console.error("Failed to create employee:", error);
+      toast({
+        title: "Save Failed",
+        description: "Could not save the employee record.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -55,6 +103,23 @@ export function EmployeeForm({ open, onClose }: EmployeeFormProps) {
                 value={formData.fullName}
                 onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                 required
+              />
+            </div>
+            <div>
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="phone">Phone</Label>
+              <Input
+                id="phone"
+                value={formData.phone}
+                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
               />
             </div>
             <div>
@@ -82,11 +147,11 @@ export function EmployeeForm({ open, onClose }: EmployeeFormProps) {
                   <SelectValue placeholder="Select department" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="it">IT</SelectItem>
-                  <SelectItem value="finance">Finance</SelectItem>
-                  <SelectItem value="hr">Human Resources</SelectItem>
-                  <SelectItem value="marketing">Marketing</SelectItem>
-                  <SelectItem value="operations">Operations</SelectItem>
+                  <SelectItem value="IT">IT</SelectItem>
+                  <SelectItem value="Finance">Finance</SelectItem>
+                  <SelectItem value="Human Resources">Human Resources</SelectItem>
+                  <SelectItem value="Marketing">Marketing</SelectItem>
+                  <SelectItem value="Operations">Operations</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -111,6 +176,14 @@ export function EmployeeForm({ open, onClose }: EmployeeFormProps) {
                 required
               />
             </div>
+            <div>
+              <Label htmlFor="rssbNumber">RSSB Number</Label>
+              <Input
+                id="rssbNumber"
+                value={formData.rssbNumber}
+                onChange={(e) => setFormData({ ...formData, rssbNumber: e.target.value })}
+              />
+            </div>
           </div>
           <div>
             <Label htmlFor="contract">Employment Contract</Label>
@@ -124,7 +197,7 @@ export function EmployeeForm({ open, onClose }: EmployeeFormProps) {
           </div>
           <div className="flex justify-end gap-2 pt-4">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">Add Employee</Button>
+            <Button type="submit" disabled={isSaving}>{isSaving ? "Saving..." : "Add Employee"}</Button>
           </div>
         </form>
       </DialogContent>

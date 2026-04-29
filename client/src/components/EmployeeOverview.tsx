@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Users, UserPlus, TrendingUp, AlertCircle } from "lucide-react";
 import { useState, useEffect } from "react";
-import PayrollService from "@/services/payrollService";
+import EmployeeRecordsService from "@/services/employeeRecordsService";
 
 export function EmployeeOverview() {
   const [employeeData, setEmployeeData] = useState({
@@ -21,7 +21,7 @@ export function EmployeeOverview() {
 
   const loadEmployeeData = async () => {
     try {
-      const employees = PayrollService.getAllEmployees();
+      const { records: employees } = await EmployeeRecordsService.getAll();
       const currentDate = new Date();
       const lastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
       
