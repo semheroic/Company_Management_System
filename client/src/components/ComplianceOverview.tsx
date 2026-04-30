@@ -1,11 +1,10 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Shield, AlertTriangle, CheckCircle, Clock } from "lucide-react";
-import { useState, useEffect } from "react";
-import TaxService from "@/services/taxService";
-import AlertService from "@/services/alertService";
+import { AlertTriangle, CheckCircle, Clock, Shield } from "lucide-react";
+import { useEffect, useState } from "react";
+import ComplianceAlertService from "@/services/complianceAlertService";
+import TaxReturnRegisterService from "@/services/taxReturnRegisterService";
 
 export function ComplianceOverview() {
   const [complianceData, setComplianceData] = useState({
@@ -14,59 +13,64 @@ export function ComplianceOverview() {
     overdueTasks: 0,
     completedThisMonth: 0,
     criticalAlerts: 0,
-    status: 'unknown' as 'good' | 'warning' | 'critical' | 'unknown'
+    status: "unknown" as "good" | "warning" | "critical" | "unknown",
   });
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    loadComplianceData();
+    void loadComplianceData();
   }, []);
 
   const loadComplianceData = async () => {
     try {
-      const taxSummary = TaxService.getTaxSummary();
-      const alerts = AlertService.getAllAlerts();
-      
-      // Calculate upcoming deadlines
+      const [{ records: taxReturns }, { records: alerts }] = await Promise.all([
+        TaxReturnRegisterService.getAll(),
+        ComplianceAlertService.getAll(),
+      ]);
+
       const currentDate = new Date();
+      const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       const thirtyDaysFromNow = new Date(currentDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-      
-      const upcomingDeadlines = Object.values(taxSummary.next_filing_dates)
-        .filter(date => {
-          const filingDate = new Date(date);
-          return filingDate >= currentDate && filingDate <= thirtyDaysFromNow;
-        }).length;
 
-      // Calculate overdue tasks
-      const overdueTasks = Object.values(taxSummary.next_filing_dates)
-        .filter(date => new Date(date) < currentDate).length;
+      const upcomingDeadlines = taxReturns.filter((record) => {
+        const dueDate = new Date(record.dueDate);
+        return record.status !== "Filed" && dueDate >= currentDate && dueDate <= thirtyDaysFromNow;
+      }).length;
 
-      // Get critical alerts
-      const criticalAlerts = alerts.filter(alert => alert.severity === 'high').length;
+      const overdueTasks = taxReturns.filter((record) => {
+        return record.status !== "Filed" && new Date(record.dueDate) < currentDate;
+      }).length;
 
-      // Calculate compliance score
-      const totalObligations = 4; // VAT, PAYE, CIT, QIT
-      const completedObligations = totalObligations - overdueTasks;
+      const criticalAlerts = alerts.filter((alert) => alert.severity === "high").length;
+      const totalObligations = taxReturns.length || 1;
+      const completedObligations = taxReturns.filter((record) => record.status === "Filed").length;
       const overallScore = (completedObligations / totalObligations) * 100;
+      const completedThisMonth = taxReturns.filter((record) => {
+        if (record.status !== "Filed" || !record.submissionDate) {
+          return false;
+        }
 
-      // Determine status
-      let status: 'good' | 'warning' | 'critical' = 'good';
+        const submissionDate = new Date(record.submissionDate);
+        return submissionDate >= monthStart && submissionDate <= currentDate;
+      }).length;
+
+      let status: "good" | "warning" | "critical" = "good";
       if (overdueTasks > 0 || criticalAlerts > 2) {
-        status = 'critical';
+        status = "critical";
       } else if (upcomingDeadlines > 2 || criticalAlerts > 0) {
-        status = 'warning';
+        status = "warning";
       }
 
       setComplianceData({
         overallScore,
         upcomingDeadlines,
         overdueTasks,
-        completedThisMonth: 2, // This would be calculated from completed tasks
+        completedThisMonth,
         criticalAlerts,
-        status
+        status,
       });
     } catch (error) {
-      console.error('Error loading compliance data:', error);
+      console.error("Error loading compliance data:", error);
     } finally {
       setIsLoading(false);
     }
@@ -74,19 +78,27 @@ export function ComplianceOverview() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'good': return 'bg-green-100 text-green-800';
-      case 'warning': return 'bg-yellow-100 text-yellow-800';
-      case 'critical': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case "good":
+        return "bg-green-100 text-green-800";
+      case "warning":
+        return "bg-yellow-100 text-yellow-800";
+      case "critical":
+        return "bg-red-100 text-red-800";
+      default:
+        return "bg-gray-100 text-gray-800";
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'good': return <CheckCircle className="w-4 h-4 text-green-600" />;
-      case 'warning': return <Clock className="w-4 h-4 text-yellow-600" />;
-      case 'critical': return <AlertTriangle className="w-4 h-4 text-red-600" />;
-      default: return <Shield className="w-4 h-4 text-gray-600" />;
+      case "good":
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
+      case "warning":
+        return <Clock className="h-4 w-4 text-yellow-600" />;
+      case "critical":
+        return <AlertTriangle className="h-4 w-4 text-red-600" />;
+      default:
+        return <Shield className="h-4 w-4 text-gray-600" />;
     }
   };
 
@@ -99,9 +111,9 @@ export function ComplianceOverview() {
         </CardHeader>
         <CardContent>
           <div className="animate-pulse space-y-2">
-            <div className="h-8 bg-gray-200 rounded"></div>
-            <div className="h-4 bg-gray-200 rounded"></div>
-            <div className="h-4 bg-gray-200 rounded"></div>
+            <div className="h-8 rounded bg-gray-200"></div>
+            <div className="h-4 rounded bg-gray-200"></div>
+            <div className="h-4 rounded bg-gray-200"></div>
           </div>
         </CardContent>
       </Card>
@@ -141,24 +153,22 @@ export function ComplianceOverview() {
           </div>
 
           {complianceData.overdueTasks > 0 && (
-            <div className="flex items-center gap-2 p-2 bg-red-50 rounded text-red-700 text-sm">
-              <AlertTriangle className="w-4 h-4" />
+            <div className="flex items-center gap-2 rounded bg-red-50 p-2 text-sm text-red-700">
+              <AlertTriangle className="h-4 w-4" />
               <span>{complianceData.overdueTasks} overdue tasks require attention</span>
             </div>
           )}
 
           {complianceData.criticalAlerts > 0 && (
-            <div className="flex items-center gap-2 p-2 bg-yellow-50 rounded text-yellow-700 text-sm">
-              <AlertTriangle className="w-4 h-4" />
+            <div className="flex items-center gap-2 rounded bg-yellow-50 p-2 text-sm text-yellow-700">
+              <AlertTriangle className="h-4 w-4" />
               <span>{complianceData.criticalAlerts} critical alerts</span>
             </div>
           )}
 
           <div className="flex items-center justify-between">
-            <div className="text-xs text-muted-foreground">
-              Last updated: {new Date().toLocaleDateString()}
-            </div>
-            <Button variant="outline" size="sm" onClick={() => window.location.href = '/compliance-alerts'}>
+            <div className="text-xs text-muted-foreground">Last updated: {new Date().toLocaleDateString()}</div>
+            <Button variant="outline" size="sm" onClick={() => window.location.href = "/compliance-alerts"}>
               View Details
             </Button>
           </div>

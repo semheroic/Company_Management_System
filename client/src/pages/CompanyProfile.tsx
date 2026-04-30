@@ -11,9 +11,8 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { CompanyProfileForm } from "@/components/forms/CompanyProfileForm";
+import { API_BASE } from "@/services/companyApi";
 import axios from "axios";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 export default function CompanyProfile() {
   const { toast } = useToast();
@@ -36,7 +35,9 @@ export default function CompanyProfile() {
   const loadCompanyData = async (id) => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE}/api/company/${id}`);
+      const response = await axios.get(`${API_BASE}/api/company/${id}`, {
+        headers: { "x-company-id": id },
+      });
       if (response.data) setCompanyData(response.data);
     } catch (error) {
       toast({ title: "Error", description: "Failed to load company profile", variant: "destructive" });
@@ -47,7 +48,9 @@ export default function CompanyProfile() {
 
   const loadDocuments = async (id) => {
     try {
-      const response = await axios.get(`${API_BASE}/api/company/${id}/documents`);
+      const response = await axios.get(`${API_BASE}/api/company/${id}/documents`, {
+        headers: { "x-company-id": id },
+      });
       setDocuments(response.data);
     } catch (error) {
       console.error("Docs load error", error);
@@ -57,7 +60,9 @@ export default function CompanyProfile() {
   const handleSave = async () => {
     if (!companyData) return;
     try {
-      await axios.put(`${API_BASE}/api/company/${companyData.id}`, companyData);
+      await axios.put(`${API_BASE}/api/company/${companyData.id}`, companyData, {
+        headers: { "x-company-id": String(companyData.id) },
+      });
       setIsEditing(false);
       toast({ title: "Success", description: "Company profile updated successfully" });
       loadCompanyData(companyData.id);
@@ -79,7 +84,9 @@ export default function CompanyProfile() {
       formData.append("file", file);
       formData.append("type", "general");
       try {
-        await axios.post(`${API_BASE}/api/company/${companyId}/upload`, formData);
+        await axios.post(`${API_BASE}/api/company/${companyId}/upload`, formData, {
+          headers: { "x-company-id": companyId },
+        });
         toast({ title: "Success", description: `${file.name} uploaded successfully` });
         loadDocuments(companyId);
       } catch (error) {
@@ -90,7 +97,14 @@ export default function CompanyProfile() {
 
   const handleDeleteDocument = async (id) => {
     try {
-      await axios.delete(`${API_BASE}/api/document/${id}`);
+      const companyId = localStorage.getItem("selectedCompanyId");
+      if (!companyId) {
+        throw new Error("No company selected");
+      }
+
+      await axios.delete(`${API_BASE}/api/company/${companyId}/documents/${id}`, {
+        headers: { "x-company-id": companyId },
+      });
       setDocuments(documents.filter(doc => doc.id !== id));
       toast({ title: "Success", description: "Document deleted" });
     } catch (error) {

@@ -1,5 +1,6 @@
 
 import axios from "axios";
+import { API_BASE } from "./companyApi";
 
 export interface CompanyCapital {
   id: string;
@@ -46,7 +47,6 @@ export interface ShareholderRecord {
   contact_info?: string;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 const API_URL = `${API_BASE}/api`;
 
 class CompanyCapitalService {
@@ -71,7 +71,7 @@ class CompanyCapitalService {
   }
 
   static getCurrentCompanyId(): string {
-    return localStorage.getItem('selectedCompanyId') || 'comp-001';
+    return localStorage.getItem('selectedCompanyId') || '';
   }
 
   static getCompanyCapital(companyId?: string): CompanyCapital | null {
@@ -81,7 +81,7 @@ class CompanyCapitalService {
 
   static async getCompanyCapitalFromApi(companyId?: string): Promise<CompanyCapital | null> {
     const targetCompanyId = companyId || this.getCurrentCompanyId();
-    if (!targetCompanyId || targetCompanyId === 'comp-001') return null;
+    if (!targetCompanyId) return null;
 
     const summaryResponse = await axios.get(`${API_URL}/company/${targetCompanyId}/capital`, {
       headers: { 'x-company-id': targetCompanyId }
@@ -115,7 +115,7 @@ class CompanyCapitalService {
 
   static async getAllShareholdersFromApi(companyId?: string): Promise<ShareholderRecord[]> {
     const targetCompanyId = companyId || this.getCurrentCompanyId();
-    if (!targetCompanyId || targetCompanyId === 'comp-001') return [];
+    if (!targetCompanyId) return [];
 
     const response = await axios.get(`${API_URL}/company/${targetCompanyId}/shareholders`, {
       headers: { 'x-company-id': targetCompanyId }

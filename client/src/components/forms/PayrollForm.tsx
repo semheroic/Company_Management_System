@@ -60,6 +60,11 @@ export function PayrollForm({ open, onClose, onSuccess }: PayrollFormProps) {
 
     setIsPosting(true);
     try {
+      const selectedCompanyId = localStorage.getItem('selectedCompanyId');
+      if (!selectedCompanyId) {
+        throw new Error("No company selected");
+      }
+
       // Post each payroll record as a Universal Transaction
       for (const record of generatedPayroll) {
         UniversalTransactionService.createTransaction({
@@ -77,7 +82,7 @@ export function PayrollForm({ open, onClose, onSuccess }: PayrollFormProps) {
           rssb_employer: record.rssbEmployer,
           net_salary: record.netSalary,
           status: 'confirmed',
-          company_id: localStorage.getItem('selectedCompanyId') || 'comp-001'
+          company_id: selectedCompanyId
         });
       }
 

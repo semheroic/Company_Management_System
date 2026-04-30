@@ -1,5 +1,6 @@
 
 import axios from "axios";
+import { API_BASE } from "./companyApi";
 
 export interface CapitalEntry {
   id: string;
@@ -30,7 +31,6 @@ export interface CapitalSummary {
   }>;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 const API_URL = `${API_BASE}/api`;
 
 class CapitalService {
@@ -54,12 +54,12 @@ class CapitalService {
   }
 
   private static getCurrentCompanyId(): string {
-    return localStorage.getItem('selectedCompanyId') || 'comp-001';
+    return localStorage.getItem('selectedCompanyId') || '';
   }
 
   static async getCapitalEntriesFromApi(companyId?: string): Promise<CapitalEntry[]> {
     const targetCompanyId = companyId || this.getCurrentCompanyId();
-    if (!targetCompanyId || targetCompanyId === 'comp-001') return [];
+    if (!targetCompanyId) return [];
 
     const response = await axios.get(`${API_URL}/company/${targetCompanyId}/capital-entries`, {
       headers: { 'x-company-id': targetCompanyId }
@@ -84,7 +84,7 @@ class CapitalService {
 
   static async getCapitalSummaryFromApi(companyId?: string): Promise<CapitalSummary> {
     const targetCompanyId = companyId || this.getCurrentCompanyId();
-    if (!targetCompanyId || targetCompanyId === 'comp-001') {
+    if (!targetCompanyId) {
       return {
         total_capital: 0,
         total_contributions: 0,

@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { API_BASE } from "@/services/companyApi";
 
 // Forms
 import { ShareCertificateForm } from "@/components/forms/ShareCertificateForm";
@@ -17,8 +18,6 @@ import { RegistersHeader } from "@/components/registers/RegistersHeader";
 import { ShareCertificatesTab } from "@/components/registers/ShareCertificatesTab";
 import { ChargesTab } from "@/components/registers/ChargesTab";
 import { BeneficialOwnersTab } from "@/components/registers/BeneficialOwnersTab";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 interface ShareRecord {
   id: number;
@@ -85,7 +84,7 @@ const mapBeneficialOwnerRecord = (record: any): BeneficialOwnerRecord => ({
 export default function Registers() {
   const { toast } = useToast();
 
-  const companyId = localStorage.getItem("selectedCompanyId") || "9";
+  const companyId = localStorage.getItem("selectedCompanyId") || "";
 
   // Data States
   const [shareRecords, setShareRecords] = useState<ShareRecord[]>([]);
@@ -104,6 +103,15 @@ export default function Registers() {
   const [showDividendForm, setShowDividendForm] = useState(false);
 
   const fetchData = useCallback(async (isManual = false) => {
+    if (!companyId) {
+      setShareRecords([]);
+      setChargeRecords([]);
+      setBeneficialOwners([]);
+      setIsLoading(false);
+      setIsSyncing(false);
+      return;
+    }
+
     if (isManual) setIsSyncing(true);
     else setIsLoading(true);
 

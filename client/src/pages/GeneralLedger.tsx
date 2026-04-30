@@ -8,12 +8,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE } from "@/services/companyApi";
 import AccountingBooksService, {
   AccountingBookEntry,
   TrialBalanceEntry,
 } from "@/services/accountingBooksService";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 export default function GeneralLedger() {
   const { toast } = useToast();

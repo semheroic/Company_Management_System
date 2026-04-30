@@ -2,20 +2,39 @@
     mysql = require('mysql2'),
     bcrypt = require('bcrypt'),
     cors = require('cors'),
+    cookieParser = require('cookie-parser'),
     dotenv = require('dotenv'),
+    session = require('express-session'),
     multer = require('multer'),
     fs = require('fs'),
     fsPromises = fs.promises,
     path = require('path'),
     { runMigrations } = require('./lib/runMigrations'),
     { signJwt, verifyJwt } = require('./lib/jwt');
-
+const MySQLStore = require('express-mysql-session')(session);
 dotenv.config({ path: path.join(__dirname, '.env') });
 const app = express(), PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'office_manager.sid';
+const SESSION_SECRET = process.env.SESSION_SECRET || JWT_SECRET;
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:8081')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
-app.use(cors());
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, origin || allowedOrigins[0]);  // ✅ Echoes exact origin
+            return;
+        }
+        callback(new AppError('CORS origin is not allowed', 403));
+    },
+    credentials: true
+}));
+app.use(cookieParser());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads');
@@ -39,12 +58,40 @@ const asyncHandler = fn => (req, res, next) => {
 
 const db = mysql.createPool({
     host: process.env.DB_HOST,
+    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10
 }).promise();
+const sessionStore = new MySQLStore({
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    clearExpired: true,
+    checkExpirationInterval: 15 * 60 * 1000,
+    expiration: SESSION_TTL_MS,
+    createDatabaseTable: true
+});
+const sessionCookieConfig = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: SESSION_TTL_MS
+};
+
+app.use(session({
+    name: SESSION_COOKIE_NAME,
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    rolling: true,
+    store: sessionStore,
+    cookie: sessionCookieConfig
+}));
 
 const verifyDatabaseConnection = async () => {
     const conn = await db.getConnection();
@@ -336,6 +383,21 @@ const getAuthTokenFromRequest = (req) => {
     return header.slice(7).trim();
 };
 
+const getSessionUserId = (req) => {
+    const userId = req.session?.authUserId;
+    return userId ? Number(userId) : null;
+};
+
+const getAuthenticatedUserId = (req) => {
+    const sessionUserId = getSessionUserId(req);
+    if (sessionUserId) {
+        return sessionUserId;
+    }
+
+    const payload = verifyJwt(getAuthTokenFromRequest(req), JWT_SECRET);
+    return Number(payload.sub);
+};
+
 const getAuthUserById = async (userId) => {
     const [[user]] = await db.query(`
         SELECT
@@ -382,9 +444,64 @@ const createAuthResponse = async (userId) => {
     return { token, user };
 };
 
+const persistAuthenticatedSession = (req, userId) => new Promise((resolve, reject) => {
+    req.session.regenerate((regenerateError) => {
+        if (regenerateError) {
+            reject(regenerateError);
+            return;
+        }
+
+        req.session.authUserId = Number(userId);
+        req.session.save((saveError) => {
+            if (saveError) {
+                reject(saveError);
+                return;
+            }
+
+            resolve();
+        });
+    });
+});
+
+const destroyAuthenticatedSession = (req) => new Promise((resolve, reject) => {
+    if (!req.session) {
+        resolve();
+        return;
+    }
+
+    req.session.destroy((error) => {
+        if (error) {
+            reject(error);
+            return;
+        }
+
+        resolve();
+    });
+});
+
 // --- 4. MIDDLEWARE ---
 
 // --- 4. MIDDLEWARE ---
+
+const requireAuth = asyncHandler(async (req, res, next) => {
+    const userId = getAuthenticatedUserId(req);
+    const [[user]] = await db.query('SELECT id, status FROM users WHERE id = ? LIMIT 1', [userId]);
+
+    if (!user) {
+        throw new AppError('User not found', 404);
+    }
+
+    if (user.status !== 'Active') {
+        if (req.session) {
+            req.session.authUserId = null;
+        }
+
+        throw new AppError(`This account is ${String(user.status).toLowerCase()}`, 403);
+    }
+
+    req.authUserId = Number(user.id);
+    next();
+});
 
 const validateCompany = asyncHandler(async (req, res, next) => {
     // Check Headers, URL Params, AND Request Body
@@ -459,8 +576,9 @@ app.post('/api/auth/signup', asyncHandler(async (req, res) => {
         }
     }
 
+    await persistAuthenticatedSession(req, result.insertId);
     const authPayload = await createAuthResponse(result.insertId);
-    res.status(201).json(authPayload);
+    res.status(201).json({ user: authPayload.user });
 }));
 
 app.post('/api/auth/login', asyncHandler(async (req, res) => {
@@ -484,16 +602,69 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
     }
 
     await db.query('UPDATE users SET last_login = NOW(), updated_at = NOW() WHERE id = ?', [user.id]);
+    await persistAuthenticatedSession(req, user.id);
     const authPayload = await createAuthResponse(user.id);
-    res.json(authPayload);
+    res.json({ user: authPayload.user });
 }));
 
-app.get('/api/auth/me', asyncHandler(async (req, res) => {
-    const token = getAuthTokenFromRequest(req);
-    const payload = verifyJwt(token, JWT_SECRET);
-    const authPayload = await createAuthResponse(payload.sub);
-    res.json(authPayload.user);
+app.post('/api/auth/logout', asyncHandler(async (req, res) => {
+    await destroyAuthenticatedSession(req);
+    res.clearCookie(SESSION_COOKIE_NAME, {
+        httpOnly: sessionCookieConfig.httpOnly,
+        secure: sessionCookieConfig.secure,
+        sameSite: sessionCookieConfig.sameSite
+    });
+    res.json({ success: true });
 }));
+
+app.get('/api/auth/me', requireAuth, asyncHandler(async (req, res) => {
+    const user = await getAuthUserById(req.authUserId);
+    res.json(user);
+}));
+
+app.put('/api/auth/profile', requireAuth, asyncHandler(async (req, res) => {
+    const { name, email, password } = req.body;
+
+    if (!name || !email) {
+        throw new AppError('Name and email are required', 400);
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const [[duplicateUser]] = await db.query(
+        'SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1',
+        [normalizedEmail, req.authUserId]
+    );
+
+    if (duplicateUser) {
+        throw new AppError('An account with that email already exists', 409);
+    }
+
+    const updateData = {
+        name: String(name).trim(),
+        email: normalizedEmail
+    };
+
+    if (password) {
+        updateData.password_hash = await bcrypt.hash(password, 10);
+    }
+
+    await db.query('UPDATE users SET ?, updated_at = NOW() WHERE id = ?', [updateData, req.authUserId]);
+    const user = await getAuthUserById(req.authUserId);
+    res.json(user);
+}));
+
+app.use('/api', (req, res, next) => {
+    const isPublicReferenceData =
+        req.method === 'GET' &&
+        (req.path === '/roles' || req.path === '/departments');
+
+    if (isPublicReferenceData) {
+        next();
+        return;
+    }
+
+    requireAuth(req, res, next);
+});
 
 // --- COMPANY ROUTES ---
 app.get('/api/companies', asyncHandler(async (req, res) => {
@@ -746,6 +917,14 @@ app.get('/api/company/:companyId/shares/history', validateCompany, asyncHandler(
 }));
 
 // --- DOCUMENTS & MAPPINGS ---
+app.get('/api/company/:companyId/documents', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        'SELECT * FROM company_documents WHERE company_id = ? ORDER BY id DESC',
+        [req.companyId]
+    );
+    res.json(rows);
+}));
+
 app.post('/api/company/:companyId/upload', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
     if (!req.file) throw new AppError('No file provided', 400);
     const [result] = await db.query('INSERT INTO company_documents SET ?', {
@@ -753,6 +932,21 @@ app.post('/api/company/:companyId/upload', upload.single('file'), validateCompan
     });
     const [[doc]] = await db.query('SELECT * FROM company_documents WHERE id = ?', [result.insertId]);
     res.status(201).json(doc);
+}));
+
+app.delete('/api/company/:companyId/documents/:documentId', validateCompany, asyncHandler(async (req, res) => {
+    const [[doc]] = await db.query(
+        'SELECT id, file_path FROM company_documents WHERE id = ? AND company_id = ? LIMIT 1',
+        [req.params.documentId, req.companyId]
+    );
+
+    if (!doc) {
+        throw new AppError('Document not found', 404);
+    }
+
+    await db.query('DELETE FROM company_documents WHERE id = ? AND company_id = ?', [req.params.documentId, req.companyId]);
+    await safeDelete(doc.file_path);
+    res.json({ success: true });
 }));
 
 app.get('/api/company/:companyId/ownership-mappings', validateCompany, asyncHandler(async (req, res) => {

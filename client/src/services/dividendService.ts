@@ -154,7 +154,7 @@ class DividendService {
       payment_method: 'bank',
       reference_number: `DIV-PAY-${distribution.id}`,
       status: 'confirmed',
-      company_id: localStorage.getItem('selectedCompanyId') || 'comp-001'
+      company_id: localStorage.getItem('selectedCompanyId') || ''
     });
 
     // Post accounting entry for dividend payment

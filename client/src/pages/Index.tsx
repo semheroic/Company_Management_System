@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { DashboardHeader } from "@/components/DashboardHeader";
+import { DashboardHeader, DashboardUserMenu } from "@/components/DashboardHeader";
 import { EmployeeOverview } from "@/components/EmployeeOverview";
 import { FinancialActivity } from "@/components/FinancialActivity";
 import { ComplianceAlerts } from "@/components/ComplianceAlerts";
@@ -9,6 +9,7 @@ import { ComplianceOverview } from "@/components/ComplianceOverview";
 import { QuickActions } from "@/components/QuickActions";
 import { RecentTransactions } from "@/components/RecentTransactions";
 import SystemHealthDashboard from "@/components/SystemHealthDashboard";
+import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import CompanySelector from "@/components/CompanySelector";
 import { Loader2, ShieldCheck } from "lucide-react";
@@ -61,7 +62,9 @@ const Index = () => {
               <DashboardHeader />
             </div>
             <div className="flex items-center gap-3">
+              <NotificationCenter />
               <CompanySelector />
+              <DashboardUserMenu />
             </div>
           </header>
           

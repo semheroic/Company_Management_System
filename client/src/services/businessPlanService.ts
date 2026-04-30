@@ -1,6 +1,7 @@
 import axios from 'axios';
+import { API_BASE } from './companyApi';
 
-const API_URL = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api`;
+const API_URL = `${API_BASE}/api`;
 
 export interface BusinessPlan {
   id: number; // MySQL auto-increment IDs are numbers

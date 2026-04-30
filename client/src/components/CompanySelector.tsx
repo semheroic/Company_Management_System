@@ -23,10 +23,9 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import axios from "axios";
+import { API_BASE } from "@/services/companyApi";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-
-const api = axios.create({ baseURL: API_BASE });
+const api = axios.create({ baseURL: API_BASE, withCredentials: true });
 api.interceptors.request.use((config) => {
   const id = localStorage.getItem("selectedCompanyId");
   if (id) config.headers["x-company-id"] = id;

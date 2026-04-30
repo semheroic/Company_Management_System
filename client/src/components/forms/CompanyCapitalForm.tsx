@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Building, DollarSign, AlertTriangle, Loader2 } from "lucide-react";
 import { CompanyCapital } from "@/services/companyCapitalService";
 import axios from "axios";
+import { COMPANY_BASE_URL } from "@/services/companyApi";
 
 interface CompanyCapitalFormProps {
   open: boolean;
@@ -101,8 +102,7 @@ export function CompanyCapitalForm({ open, onClose, onSuccess, editData }: Compa
         capital_type: formData.capital_type as 'ordinary' | 'preference' | 'mixed'
       };
 
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-      const endpoint = `${baseUrl}/api/company/${companyId}/capital-structure`;
+      const endpoint = `${COMPANY_BASE_URL}/${companyId}/capital-structure`;
       await axios.post(endpoint, capitalData, {
         headers: { "x-company-id": companyId }
       });

@@ -14,6 +14,7 @@ import {
 import { CompanyCapitalForm } from "@/components/forms/CompanyCapitalForm";
 import { BeneficialOwnerForm } from "@/components/forms/BeneficialOwnerForm";
 import { useToast } from "@/hooks/use-toast";
+import { COMPANY_BASE_URL } from "@/services/companyApi";
 
 interface CapitalManagementDashboardProps {
   companyId?: string;
@@ -23,8 +24,7 @@ export function CapitalManagementDashboard({ companyId: companyIdProp }: Capital
   const { toast } = useToast();
   const { id: routeId } = useParams<{ id: string }>();
   
-  // Use route ID, or fallback to storage, or default to a test ID
-  const companyId = companyIdProp || routeId || localStorage.getItem('selectedCompanyId') || "9";
+  const companyId = companyIdProp || routeId || localStorage.getItem('selectedCompanyId') || "";
 
   // UI State
   const [isLoading, setIsLoading] = useState(true);
@@ -40,13 +40,16 @@ export function CapitalManagementDashboard({ companyId: companyIdProp }: Capital
   useEffect(() => {
     if (companyId) {
       loadDashboardData();
+      return;
     }
+
+    setIsLoading(false);
   }, [companyId]);
 
   const loadDashboardData = async () => {
     setIsLoading(true);
     const headers = { "x-company-id": companyId };
-    const baseUrl = "http://localhost:5000/api/company";
+    const baseUrl = COMPANY_BASE_URL;
 
     try {
       // Parallel requests to all relevant endpoints provided in your backend
@@ -83,7 +86,7 @@ export function CapitalManagementDashboard({ companyId: companyIdProp }: Capital
     if (!window.confirm("Are you sure you want to remove this beneficial owner?")) return;
 
     try {
-      await axios.delete(`http://localhost:5000/api/company/${companyId}/beneficial-owners/${id}`, {
+      await axios.delete(`${COMPANY_BASE_URL}/${companyId}/beneficial-owners/${id}`, {
         headers: { "x-company-id": companyId }
       });
       toast({ title: "Success", description: "Owner removed successfully" });
@@ -105,6 +108,15 @@ export function CapitalManagementDashboard({ companyId: companyIdProp }: Capital
           <p className="text-sm text-muted-foreground">Loading Registry Data...</p>
         </div>
       </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert>
+        <AlertTriangle className="h-4 w-4" />
+        <AlertDescription>Select a company first to load capital and ownership data.</AlertDescription>
+      </Alert>
     );
   }
 

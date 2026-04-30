@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { PiggyBank, Upload, Loader2 } from "lucide-react";
 import axios from "axios";
+import { COMPANY_BASE_URL } from "@/services/companyApi";
 
 interface CapitalEntryFormProps {
   open: boolean;
@@ -48,8 +49,7 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
       }
 
       try {
-        const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-        const response = await axios.get(`${baseUrl}/api/company/${companyId}/members`, {
+        const response = await axios.get(`${COMPANY_BASE_URL}/${companyId}/members`, {
           headers: { "x-company-id": companyId },
         });
 
@@ -117,8 +117,7 @@ export function CapitalEntryForm({ open, onClose, onSuccess }: CapitalEntryFormP
         payload.append("file", selectedFile);
       }
 
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-      await axios.post(`${baseUrl}/api/company/${companyId}/capital/entry`, payload, {
+      await axios.post(`${COMPANY_BASE_URL}/${companyId}/capital/entry`, payload, {
         headers: {
           "x-company-id": companyId,
           "Content-Type": "multipart/form-data",

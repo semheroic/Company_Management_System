@@ -21,12 +21,11 @@ import { useToast } from "@/hooks/use-toast";
 import { AccountingEntryForm } from "@/components/forms/AccountingEntryForm";
 import { UniversalTransactionForm } from "@/components/forms/UniversalTransactionForm";
 import IncomeBreakdown from "@/components/reports/IncomeBreakdown";
+import { API_BASE } from "@/services/companyApi";
 import AccountingBooksService, {
   AccountingBookEntry,
   AccountingBookSummary,
 } from "@/services/accountingBooksService";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 export default function AccountingBooks() {
   const { toast } = useToast();

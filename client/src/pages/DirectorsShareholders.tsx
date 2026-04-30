@@ -26,7 +26,6 @@ interface DirectorShareholder {
 }
 
 const AUTHORIZED_SHARES = 10000;
-axios.defaults.baseURL = 'http://localhost:5000';
 
 export default function DirectorsShareholders() {
   const { toast } = useToast();

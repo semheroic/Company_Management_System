@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle, Loader2 } from "lucide-react";
+import { COMPANY_BASE_URL } from "@/services/companyApi";
 
 interface DirectorShareholderFormProps {
   open: boolean;
@@ -129,7 +130,7 @@ export function DirectorShareholderForm({
       }
 
       let response;
-      const url = `http://localhost:5000/api/company/${companyId}/members`;
+      const url = `${COMPANY_BASE_URL}/${companyId}/members`;
       
       if (editData && editData.id) {
         response = await axios.put(`${url}/${editData.id}`, data, {

@@ -117,6 +117,11 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
       };
 
       if (formData.useUTS) {
+        const selectedCompanyId = localStorage.getItem("selectedCompanyId");
+        if (!selectedCompanyId) {
+          throw new Error("No company selected");
+        }
+
         UniversalTransactionService.createTransaction({
           type: "asset_acquisition",
           amount: totalAmount,
@@ -125,7 +130,7 @@ export function FixedAssetForm({ open, onClose, onSuccess }: FixedAssetFormProps
           date: formData.acquisitionDate,
           supplier: formData.supplier,
           status: "confirmed",
-          company_id: localStorage.getItem("selectedCompanyId") || "comp-001",
+          company_id: selectedCompanyId,
           asset_details: {
             name: formData.name,
             category: formData.category,

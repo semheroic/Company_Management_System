@@ -1,7 +1,8 @@
 import axios from "axios";
+import { API_ROOT_URL, COMPANY_API_BASE_URL } from "@/lib/api";
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-export const COMPANY_BASE_URL = `${API_BASE}/api/company`;
+export const API_BASE = API_ROOT_URL;
+export const COMPANY_BASE_URL = COMPANY_API_BASE_URL;
 
 interface CompanyRecord {
   id: number;
@@ -11,6 +12,7 @@ interface CompanyRecord {
 export const getCurrentCompanyId = (): string | null => localStorage.getItem("selectedCompanyId");
 
 export const getCompanyHeaders = (companyId: string) => ({
+  withCredentials: true,
   headers: {
     "x-company-id": companyId,
   },

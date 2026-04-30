@@ -1,7 +1,9 @@
 import axios from "axios";
+import { API_BASE_URL } from "@/lib/api";
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_BACKEND_API,
+  baseURL: API_BASE_URL,
+  withCredentials: true,
 });
 
 // Automatically inject the selected Company ID into every request header

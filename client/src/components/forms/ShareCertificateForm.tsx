@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { COMPANY_BASE_URL } from "@/services/companyApi";
 
 interface ShareCertificateFormProps {
   open: boolean;
@@ -19,7 +20,7 @@ export function ShareCertificateForm({ open, onClose, onAdd }: ShareCertificateF
   const { id: routeId } = useParams<{ id: string }>();
   
   // Use the ID from the URL, or fallback to the session ID like in your working component
-  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "9";
+  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "";
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -36,6 +37,10 @@ export function ShareCertificateForm({ open, onClose, onAdd }: ShareCertificateF
     setIsSubmitting(true);
 
     try {
+      if (!companyId) {
+        throw new Error("No company selected");
+      }
+
       // Ensure shares_count is a number for the database
       const payload = {
         ...formData,
@@ -43,7 +48,7 @@ export function ShareCertificateForm({ open, onClose, onAdd }: ShareCertificateF
       };
 
       const response = await axios.post(
-        `http://localhost:5000/api/company/${companyId}/certificates`,
+        `${COMPANY_BASE_URL}/${companyId}/certificates`,
         payload,
         {
           headers: {

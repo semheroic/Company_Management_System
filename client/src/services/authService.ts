@@ -1,5 +1,4 @@
-import axios from "axios";
-import { API_BASE } from "./companyApi";
+import { apiClient } from "@/lib/api";
 
 export interface AuthUser {
   id: number;
@@ -16,7 +15,6 @@ export interface AuthUser {
 }
 
 interface AuthResponse {
-  token: string;
   user: AuthUser;
 }
 
@@ -33,46 +31,31 @@ interface SignUpInput {
   department_id?: number | null;
 }
 
-const TOKEN_KEY = "authToken";
 const USER_KEY = "authUser";
 
 class AuthService {
   static async login(input: LoginInput): Promise<AuthUser> {
-    const response = await axios.post<AuthResponse>(`${API_BASE}/api/auth/login`, input, {
+    const response = await apiClient.post<AuthResponse>("/api/auth/login", input, {
       headers: { "Content-Type": "application/json" },
     });
 
-    this.persistSession(response.data);
+    this.persistUser(response.data.user);
     return response.data.user;
   }
 
   static async signUp(input: SignUpInput): Promise<AuthUser> {
-    const response = await axios.post<AuthResponse>(`${API_BASE}/api/auth/signup`, input, {
+    const response = await apiClient.post<AuthResponse>("/api/auth/signup", input, {
       headers: { "Content-Type": "application/json" },
     });
 
-    this.persistSession(response.data);
+    this.persistUser(response.data.user);
     return response.data.user;
   }
 
   static async getProfile(): Promise<AuthUser> {
-    const token = this.getToken();
-    if (!token) {
-      throw new Error("No auth token found.");
-    }
-
-    const response = await axios.get<AuthUser>(`${API_BASE}/api/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    localStorage.setItem(USER_KEY, JSON.stringify(response.data));
+    const response = await apiClient.get<AuthUser>("/api/auth/me");
+    this.persistUser(response.data);
     return response.data;
-  }
-
-  static getToken(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
   }
 
   static getUser(): AuthUser | null {
@@ -87,17 +70,32 @@ class AuthService {
   }
 
   static isAuthenticated(): boolean {
-    return Boolean(this.getToken());
+    return Boolean(this.getUser());
   }
 
-  static logout(): void {
-    localStorage.removeItem(TOKEN_KEY);
+  static async updateProfile(input: Partial<Pick<AuthUser, "name" | "email">> & { password?: string }): Promise<AuthUser> {
+    const response = await apiClient.put<AuthUser>("/api/auth/profile", input, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    this.persistUser(response.data);
+    return response.data;
+  }
+
+  static async logout(): Promise<void> {
+    try {
+      await apiClient.post("/api/auth/logout");
+    } finally {
+      this.clearCachedUser();
+    }
+  }
+
+  static clearCachedUser(): void {
     localStorage.removeItem(USER_KEY);
   }
 
-  private static persistSession(payload: AuthResponse) {
-    localStorage.setItem(TOKEN_KEY, payload.token);
-    localStorage.setItem(USER_KEY, JSON.stringify(payload.user));
+  private static persistUser(user: AuthUser) {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
   }
 }
 

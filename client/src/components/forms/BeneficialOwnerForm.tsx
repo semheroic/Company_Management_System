@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, UserCheck } from "lucide-react";
+import { COMPANY_BASE_URL } from "@/services/companyApi";
 
 interface BeneficialOwnerFormProps {
   open: boolean;
@@ -19,7 +20,7 @@ export function BeneficialOwnerForm({ open, onClose, onAdd }: BeneficialOwnerFor
   const { toast } = useToast();
   const { id: routeId } = useParams<{ id: string }>();
   
-  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "9";
+  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "";
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -38,6 +39,10 @@ export function BeneficialOwnerForm({ open, onClose, onAdd }: BeneficialOwnerFor
     setIsSubmitting(true);
 
     try {
+      if (!companyId) {
+        throw new Error("No company selected");
+      }
+
       // Map exactly to your DB field list
       const payload = {
         full_name: formData.full_name,
@@ -50,7 +55,7 @@ export function BeneficialOwnerForm({ open, onClose, onAdd }: BeneficialOwnerFor
       };
 
       const response = await axios.post(
-        `http://localhost:5000/api/company/${companyId}/beneficial-owners`,
+        `${COMPANY_BASE_URL}/${companyId}/beneficial-owners`,
         payload,
         {
           headers: {

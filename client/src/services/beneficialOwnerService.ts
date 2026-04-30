@@ -1,7 +1,7 @@
 import axios from "axios";
+import { COMPANY_BASE_URL } from "./companyApi";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-const BASE_URL = `${API_BASE}/api/company`;
+const BASE_URL = COMPANY_BASE_URL;
 
 export interface BeneficialOwner {
   id: number; // Changed to number for MariaDB auto-increment

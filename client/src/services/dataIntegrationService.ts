@@ -56,7 +56,7 @@ class DataIntegrationService {
 
   // Get current company ID
   private static getCurrentCompanyId(): string {
-    return localStorage.getItem('selectedCompanyId') || 'comp-001';
+    return localStorage.getItem('selectedCompanyId') || '';
   }
 
   // Get all integrated data for a company

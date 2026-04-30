@@ -89,8 +89,13 @@ export function DividendDeclarationForm({ open, onClose, onSuccess }: DividendDe
     }
 
     try {
+      const selectedCompanyId = localStorage.getItem('selectedCompanyId');
+      if (!selectedCompanyId) {
+        throw new Error("No company selected");
+      }
+
       const declaration = DividendService.createDividendDeclaration({
-        company_id: localStorage.getItem('selectedCompanyId') || 'comp-001',
+        company_id: selectedCompanyId,
         profit_amount: preview.profitAmount,
         dividend_percentage: preview.dividendPercentage,
         approved_by: formData.approvedBy,

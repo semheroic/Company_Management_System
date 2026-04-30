@@ -50,11 +50,12 @@ class UniversalTransactionService {
 
   static createTransaction(data: Omit<UniversalTransaction, 'id' | 'created_at'> & { company_id?: string }): UniversalTransaction {
     this.loadTransactions();
+    const currentCompanyId = data.company_id || localStorage.getItem('selectedCompanyId') || '';
     
     const transaction: UniversalTransaction = {
       ...data,
       id: `txn-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      company_id: data.company_id || localStorage.getItem('selectedCompanyId') || 'comp-001',
+      company_id: currentCompanyId,
       created_at: new Date().toISOString()
     };
 
@@ -76,7 +77,7 @@ class UniversalTransactionService {
 
   static getAllTransactions(): UniversalTransaction[] {
     this.loadTransactions();
-    const currentCompanyId = localStorage.getItem('selectedCompanyId') || 'comp-001';
+    const currentCompanyId = localStorage.getItem('selectedCompanyId') || '';
     return this.transactions
       .filter(t => t.company_id === currentCompanyId)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -401,7 +402,7 @@ class UniversalTransactionService {
       payment_method: 'bank',
       status: 'confirmed',
       tax_category: 'depreciation',
-      company_id: localStorage.getItem('selectedCompanyId') || 'comp-001'
+      company_id: localStorage.getItem('selectedCompanyId') || ''
     });
   }
 }

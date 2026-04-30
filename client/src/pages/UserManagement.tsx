@@ -19,7 +19,7 @@ import { Link } from "react-router-dom";
 import { API_BASE as ROOT_API_BASE } from "@/services/companyApi";
 
 const API_BASE = `${ROOT_API_BASE}/api`;
-const api = axios.create({ baseURL: API_BASE });
+const api = axios.create({ baseURL: API_BASE, withCredentials: true });
 
 export default function UserManagement() {
   const { toast } = useToast();
@@ -66,7 +66,7 @@ export default function UserManagement() {
       toast({
         variant: "destructive",
         title: "API Error",
-        description: "Could not fetch data from localhost:5000. Is the server running?"
+        description: "Could not fetch admin data from the backend API."
       });
     } finally {
       setLoading(false);

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { COMPANY_BASE_URL } from "@/services/companyApi";
 
 interface ChargeFormProps {
   open: boolean;
@@ -20,7 +21,7 @@ export function ChargeForm({ open, onClose, onAdd }: ChargeFormProps) {
   const { id: routeId } = useParams<{ id: string }>();
   
   // Consistency with your other working components
-  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "9";
+  const companyId = routeId || localStorage.getItem('selectedCompanyId') || "";
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
@@ -36,8 +37,12 @@ export function ChargeForm({ open, onClose, onAdd }: ChargeFormProps) {
     setIsSubmitting(true);
 
     try {
+      if (!companyId) {
+        throw new Error("No company selected");
+      }
+
       const response = await axios.post(
-        `http://localhost:5000/api/company/${companyId}/charges`,
+        `${COMPANY_BASE_URL}/${companyId}/charges`,
         formData,
         {
           headers: {

@@ -7,12 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { ContractForm } from "@/components/forms/ContractForm";
+import { API_BASE } from "@/services/companyApi";
 import ContractRegisterService, {
   ContractRecord,
   ContractSummary,
 } from "@/services/contractRegisterService";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 export default function ContractsAgreements() {
   const [showForm, setShowForm] = useState(false);
