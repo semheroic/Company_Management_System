@@ -121,8 +121,8 @@ export function DirectorShareholderForm({
       data.append("shares_held", formData.ownershipPercent);
       data.append("status", formData.status);
       
-      // Fix: Use Local Date (en-CA = YYYY-MM-DD) instead of UTC to ensure April 6th
-      const dateToSave = editData?.join_date || new Date().toLocaleDateString('en-CA');
+      const existingJoinDate = editData?.join_date || editData?.joinDate;
+      const dateToSave = existingJoinDate || new Date().toLocaleDateString('en-CA');
       data.append("join_date", dateToSave);
       
       if (formData.document) {

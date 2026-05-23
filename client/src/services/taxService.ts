@@ -182,7 +182,7 @@ class TaxService {
     const total_rssb = rssbEntries.reduce((sum, entry) => sum + entry.credit, 0);
     
     // Get Gross Salary entries
-    const salaryEntries = payrollEntries.filter(entry => entry.account_code === '5001');
+    const salaryEntries = payrollEntries.filter(entry => entry.account_code === '5002');
     const total_gross_salary = salaryEntries.reduce((sum, entry) => sum + entry.debit, 0);
     
     // Mock employee breakdown (in real system, this would come from payroll records)

@@ -125,8 +125,8 @@ class DividendService {
         source_id: declaration.id,
         source_type: 'manual',
         entries: [
-          { account_code: '3002', account_name: 'Retained Earnings', debit: declaration.dividend_pool },
-          { account_code: '2201', account_name: 'Dividend Payable', credit: declaration.dividend_pool }
+          { account_code: '3001', account_name: 'Retained Earnings', debit: declaration.dividend_pool },
+          { account_code: '2104', account_name: 'Dividend Payable', credit: declaration.dividend_pool }
         ]
       });
     });
@@ -166,7 +166,7 @@ class DividendService {
         source_id: distribution.id,
         source_type: 'payment',
         entries: [
-          { account_code: '2201', account_name: 'Dividend Payable', debit: distribution.amount },
+          { account_code: '2104', account_name: 'Dividend Payable', debit: distribution.amount },
           { account_code: '1001', account_name: 'Cash at Bank', credit: distribution.amount }
         ]
       });

@@ -16,9 +16,22 @@ api.interceptors.request.use((config) => {
 export interface Company {
   id: number;
   name: string;
+  logo_url?: string | null;
+  registration_number?: string | null;
   tin?: string;
-  status: 'active' | 'inactive' | 'pending';
-  // ... other fields
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  sector?: string | null;
+  size?: string | null;
+  currency?: string;
+  incorporation_date?: string | null;
+  fiscal_year_start?: string | null;
+  tax_regime?: string | null;
+  country?: string | null;
+  status: 'active' | 'inactive' | 'pending' | 'suspended';
+  created_at?: string;
+  updated_at?: string;
 }
 
 class CompanyService {
@@ -70,6 +83,15 @@ class CompanyService {
       const { data } = await api.put(`/company/${id}`, updates);
       return data;
     } catch (err) { return null; }
+  }
+
+  static async deleteCompany(id: number): Promise<boolean> {
+    try {
+      await api.delete(`/company/${id}`);
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
 }
 

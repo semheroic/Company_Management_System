@@ -17,6 +17,8 @@ export interface PayrollRecord {
   netSalary: number;
   paid: boolean;
   paidAt?: string | null;
+  accountingJournalId?: number | null;
+  accountingPostedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   employee: EmployeeRecord | null;
@@ -53,6 +55,8 @@ interface PayrollApiRecord {
   net_salary: number | string;
   status: "paid" | "unpaid";
   paid_at: string | null;
+  accounting_journal_id?: number | null;
+  accounting_posted_at?: string | null;
   created_at: string;
   updated_at: string;
   employee: {
@@ -75,6 +79,8 @@ interface PayrollApiRecord {
 interface PayrollResponse {
   records: PayrollApiRecord[];
   summary: PayrollSummary;
+  journalId?: number;
+  reference?: string;
 }
 
 class PayrollRegisterService {
@@ -114,6 +120,33 @@ class PayrollRegisterService {
       return {
         records: (response.data.records || []).map((record) => this.mapRecord(record)),
         summary: this.mapSummary(response.data.summary, month),
+      };
+    });
+  }
+
+  static async postToAccounting(
+    month: string,
+    companyId?: string,
+  ): Promise<{ records: PayrollRecord[]; summary: PayrollSummary; journalId?: number; reference?: string }> {
+    return requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.post<PayrollResponse>(
+        `${COMPANY_BASE_URL}/${targetId}/payroll-records/post-to-accounting`,
+        {
+          payroll_month: month,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-company-id": targetId,
+          },
+        },
+      );
+
+      return {
+        records: (response.data.records || []).map((record) => this.mapRecord(record)),
+        summary: this.mapSummary(response.data.summary, month),
+        journalId: response.data.journalId,
+        reference: response.data.reference,
       };
     });
   }
@@ -228,6 +261,11 @@ class PayrollRegisterService {
       netSalary: Number(record.net_salary || 0),
       paid: record.status === "paid",
       paidAt: record.paid_at,
+      accountingJournalId:
+        record.accounting_journal_id === null || record.accounting_journal_id === undefined
+          ? null
+          : Number(record.accounting_journal_id),
+      accountingPostedAt: record.accounting_posted_at || null,
       createdAt: record.created_at,
       updatedAt: record.updated_at,
       employee: record.employee

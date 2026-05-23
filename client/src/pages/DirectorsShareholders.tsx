@@ -87,9 +87,9 @@ export default function DirectorsShareholders() {
         id: m.id,
         name: m.name,
         nationalId: m.national_id,
-        role: m.role,
+        role: m.role || m.member_type || "",
         nationality: m.nationality,
-        shares: m.shares_held.toString(),
+        shares: String(m.shares_held ?? 0),
         joinDate: m.join_date ? new Date(m.join_date).toISOString().split('T')[0] : "",
         status: m.status,
         document_path: m.document_path

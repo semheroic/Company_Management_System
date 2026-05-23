@@ -1,9 +1,17 @@
-﻿const express = require('express'),
+﻿// ── TOP OF FILE ── replace the entire chained require block with this:
+
+const dotenv = require('dotenv');
+if (process.env.NODE_ENV !== 'production') {
+    dotenv.config({ path: require('path').join(__dirname, '.env') });
+}
+const isProduction = process.env.NODE_ENV === 'production';
+
+const express = require('express'),
     mysql = require('mysql2'),
     bcrypt = require('bcrypt'),
     cors = require('cors'),
     cookieParser = require('cookie-parser'),
-    dotenv = require('dotenv'),
+    // dotenv is already required above, remove it from here
     session = require('express-session'),
     multer = require('multer'),
     fs = require('fs'),
@@ -12,13 +20,14 @@
     { runMigrations } = require('./lib/runMigrations'),
     { signJwt, verifyJwt } = require('./lib/jwt');
 const MySQLStore = require('express-mysql-session')(session);
-dotenv.config({ path: path.join(__dirname, '.env') });
 const app = express(), PORT = process.env.PORT || 5000;
+app.set('trust proxy', 1); 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'office_manager.sid';
 const SESSION_SECRET = process.env.SESSION_SECRET || JWT_SECRET;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_OPERATION_TIMEOUT_MS = 5000;
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:8081')
     .split(',')
     .map((origin) => origin.trim())
@@ -27,10 +36,11 @@ const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:8081')
 app.use(cors({
     origin(origin, callback) {
         if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, origin || allowedOrigins[0]);  // ✅ Echoes exact origin
+            callback(null, origin || allowedOrigins[0]);
             return;
         }
-        callback(new AppError('CORS origin is not allowed', 403));
+        console.log('Blocked CORS origin:', origin);
+        callback(null, false);  // ✅ silently reject, don't crash
     },
     credentials: true
 }));
@@ -57,20 +67,20 @@ const asyncHandler = fn => (req, res, next) => {
 // --- 2. DATABASE CONNECTION ---
 
 const db = mysql.createPool({
-    host: process.env.DB_HOST,
+    host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'office_manager_db',
     waitForConnections: true,
     connectionLimit: 10
 }).promise();
 const sessionStore = new MySQLStore({
-    host: process.env.DB_HOST,
+    host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'office_manager_db',
     clearExpired: true,
     checkExpirationInterval: 15 * 60 * 1000,
     expiration: SESSION_TTL_MS,
@@ -78,12 +88,12 @@ const sessionStore = new MySQLStore({
 });
 const sessionCookieConfig = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',  // ✅ cross-origin fix
     maxAge: SESSION_TTL_MS
 };
 
-app.use(session({
+const sessionMiddleware = session({
     name: SESSION_COOKIE_NAME,
     secret: SESSION_SECRET,
     resave: false,
@@ -91,7 +101,36 @@ app.use(session({
     rolling: true,
     store: sessionStore,
     cookie: sessionCookieConfig
-}));
+});
+
+app.use((req, res, next) => {
+    sessionMiddleware(req, res, (error) => {
+        if (!error) {
+            next();
+            return;
+        }
+
+        const hasSessionCookie = Boolean(req.cookies?.[SESSION_COOKIE_NAME]);
+        const isRecoverableSessionError =
+            hasSessionCookie &&
+            (error instanceof SyntaxError ||
+                /session/i.test(error.message || '') ||
+                /json/i.test(error.message || ''));
+
+        if (isRecoverableSessionError) {
+            res.clearCookie(SESSION_COOKIE_NAME, {
+                httpOnly: sessionCookieConfig.httpOnly,
+                secure: sessionCookieConfig.secure,
+                sameSite: sessionCookieConfig.sameSite
+            });
+            req.session = null;
+            next();
+            return;
+        }
+
+        next(error);
+    });
+});
 
 const verifyDatabaseConnection = async () => {
     const conn = await db.getConnection();
@@ -113,6 +152,36 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 const safeDelete = async (filePath) => { if (filePath) try { await fsPromises.unlink(filePath); } catch { } };
 const normalizePath = (p) => p ? p.replace(/\\/g, '/') : null;
+const isManagedUploadPath = (value) => {
+    const normalized = normalizePath(value);
+    return Boolean(normalized && normalized.startsWith('uploads/'));
+};
+const cleanupManagedUpload = async (value) => {
+    if (isManagedUploadPath(value)) {
+        await safeDelete(value);
+    }
+};
+const DEFAULT_PROFILE_PICTURE_URL = '/default-avatar.svg';
+const COMPANY_SELECT_FIELDS = `
+    id,
+    name,
+    logo_url,
+    registration_number,
+    tin,
+    email,
+    phone,
+    address,
+    sector,
+    size,
+    currency,
+    incorporation_date,
+    fiscal_year_start,
+    tax_regime,
+    country,
+    status,
+    created_at,
+    updated_at
+`;
 const DEFAULT_ACCOUNTS = [
     { code: '1001', name: 'Cash at Bank', category: 'asset' },
     { code: '1002', name: 'Petty Cash', category: 'asset' },
@@ -290,6 +359,10 @@ const formatPayrollRecord = (row) => ({
     net_salary: toNumber(row.net_salary),
     status: row.status,
     paid_at: row.paid_at,
+    accounting_journal_id: row.accounting_journal_id === null || row.accounting_journal_id === undefined
+        ? null
+        : Number(row.accounting_journal_id),
+    accounting_posted_at: row.accounting_posted_at || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     employee: row.employee_id ? {
@@ -307,6 +380,38 @@ const formatPayrollRecord = (row) => ({
         contract_file_name: row.employee_contract_file_name,
         contract_file_path: row.employee_contract_file_path
     } : null
+});
+
+const PAYROLL_RECORD_SELECT = `
+    SELECT
+        pr.*,
+        e.full_name AS employee_full_name,
+        e.email AS employee_email,
+        e.phone AS employee_phone,
+        e.national_id AS employee_national_id,
+        e.position AS employee_position,
+        e.department AS employee_department,
+        e.start_date AS employee_start_date,
+        e.gross_salary AS employee_gross_salary,
+        e.rssb_number AS employee_rssb_number,
+        e.status AS employee_status,
+        e.contract_file_name AS employee_contract_file_name,
+        e.contract_file_path AS employee_contract_file_path
+    FROM payroll_records pr
+    JOIN employees e ON e.id = pr.employee_id
+    WHERE pr.company_id = ?
+`;
+
+const buildPayrollSummary = (records, month) => ({
+    ...(month ? { month } : {}),
+    totalEmployees: records.length,
+    totalGrossPay: records.reduce((sum, record) => sum + record.gross_salary, 0),
+    totalPaye: records.reduce((sum, record) => sum + record.paye_tax, 0),
+    totalRssbEmployee: records.reduce((sum, record) => sum + record.rssb_employee, 0),
+    totalRssbEmployer: records.reduce((sum, record) => sum + record.rssb_employer, 0),
+    totalNetPay: records.reduce((sum, record) => sum + record.net_salary, 0),
+    paidCount: records.filter((record) => record.status === 'paid').length,
+    unpaidCount: records.filter((record) => record.status === 'unpaid').length
 });
 
 const formatAuditReportRecord = (row) => ({
@@ -333,6 +438,12 @@ const formatDocumentVaultRecord = (row) => ({
     ...row,
     file_size: Number(row.file_size || 0),
     secured: Boolean(row.secured)
+});
+
+const formatNotificationRecord = (row) => ({
+    ...row,
+    company_id: Number(row.company_id),
+    is_read: Boolean(row.is_read)
 });
 
 const defaultCompanySettings = () => ({
@@ -388,20 +499,191 @@ const getSessionUserId = (req) => {
     return userId ? Number(userId) : null;
 };
 
+const normalizeOptionalString = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+
+    const normalized = String(value).trim();
+    return normalized ? normalized : null;
+};
+
+const normalizeRequiredString = (value, fieldName) => {
+    const normalized = normalizeOptionalString(value);
+    if (!normalized) {
+        throw new AppError(`${fieldName} is required`, 400);
+    }
+    return normalized;
+};
+
+const normalizeOptionalEmail = (value) => {
+    const normalized = normalizeOptionalString(value);
+    return normalized ? normalized.toLowerCase() : normalized;
+};
+
+const normalizeDateOnly = (value, fieldName) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+
+    const normalized = String(value).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+        throw new AppError(`${fieldName} must use YYYY-MM-DD format`, 400);
+    }
+
+    return normalized;
+};
+
+const normalizeFiscalYearStart = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+
+    const normalized = String(value).trim();
+    if (!/^\d{2}-\d{2}$/.test(normalized)) {
+        throw new AppError('Fiscal year start must use MM-DD format', 400);
+    }
+
+    return normalized;
+};
+
+const normalizeCompanyStatus = (value, defaultValue) => {
+    if (value === undefined) return defaultValue;
+
+    const normalized = String(value).trim().toLowerCase();
+    if (!normalized) return defaultValue;
+
+    if (!['active', 'inactive', 'pending', 'suspended'].includes(normalized)) {
+        throw new AppError('Invalid company status', 400);
+    }
+
+    return normalized;
+};
+
+const normalizeProfilePictureUrl = (value) => {
+    const normalized = normalizeOptionalString(value);
+    return normalized ? normalizePath(normalized) : null;
+};
+
+const applyDefaultProfilePicture = (user) => ({
+    ...user,
+    profile_picture_url: user?.profile_picture_url || DEFAULT_PROFILE_PICTURE_URL
+});
+
+const mapCompanyRow = (row) => ({
+    ...row,
+    logo_url: row.logo_url || null,
+    registration_number: row.registration_number || null,
+    sector: row.sector || null,
+    size: row.size || null,
+    currency: row.currency || 'RWF',
+    incorporation_date: row.incorporation_date || null,
+    fiscal_year_start: row.fiscal_year_start || '01-01',
+    tax_regime: row.tax_regime || 'General',
+    country: row.country || 'Rwanda',
+    status: row.status || 'active'
+});
+
+const getCompanyById = async (companyId, conn = db) => {
+    const [[company]] = await conn.query(`
+        SELECT ${COMPANY_SELECT_FIELDS}
+        FROM companies
+        WHERE id = ?
+        LIMIT 1
+    `, [companyId]);
+
+    if (!company) {
+        throw new AppError('Company not found', 404);
+    }
+
+    return mapCompanyRow(company);
+};
+
+const buildCompanyPayload = (body, { isCreate = false, allowEmpty = false } = {}) => {
+    const payload = {};
+
+    if (isCreate || body.name !== undefined) {
+        payload.name = normalizeRequiredString(body.name, 'Company name');
+    }
+
+    const fieldMap = {
+        logo_url: normalizeProfilePictureUrl(body.logo_url),
+        registration_number: normalizeOptionalString(body.registration_number ?? body.registration_no),
+        tin: normalizeOptionalString(body.tin),
+        email: normalizeOptionalEmail(body.email),
+        phone: normalizeOptionalString(body.phone),
+        address: normalizeOptionalString(body.address),
+        sector: normalizeOptionalString(body.sector ?? body.industry),
+        size: normalizeOptionalString(body.size),
+        currency: normalizeOptionalString(body.currency)?.toUpperCase() ?? undefined,
+        incorporation_date: normalizeDateOnly(body.incorporation_date, 'Incorporation date'),
+        fiscal_year_start: normalizeFiscalYearStart(body.fiscal_year_start),
+        tax_regime: normalizeOptionalString(body.tax_regime),
+        country: normalizeOptionalString(body.country),
+        status: normalizeCompanyStatus(body.status, isCreate ? 'active' : undefined)
+    };
+
+    Object.entries(fieldMap).forEach(([key, value]) => {
+        if (value !== undefined) {
+            payload[key] = value;
+        }
+    });
+
+    if (isCreate) {
+        payload.currency = payload.currency || 'RWF';
+        payload.fiscal_year_start = payload.fiscal_year_start || '01-01';
+        payload.tax_regime = payload.tax_regime || 'General';
+        payload.country = payload.country || 'Rwanda';
+        payload.status = payload.status || 'active';
+    } else if (!allowEmpty && !Object.keys(payload).length) {
+        throw new AppError('At least one company field is required', 400);
+    }
+
+    return payload;
+};
+
+const createNotification = async (companyId, notification, conn = db) => {
+    const notificationId =
+        typeof globalThis.crypto?.randomUUID === 'function'
+            ? globalThis.crypto.randomUUID()
+            : `notif-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const payload = {
+        id: notificationId,
+        company_id: companyId,
+        title: normalizeRequiredString(notification.title, 'Notification title'),
+        message: normalizeRequiredString(notification.message, 'Notification message'),
+        type: notification.type || 'info',
+        priority: notification.priority || 'medium',
+        is_read: notification.is_read ? 1 : 0,
+        due_date: notification.due_date || null,
+        action_url: normalizeOptionalString(notification.action_url)
+    };
+
+    await conn.query('INSERT INTO notifications SET ?', payload);
+    const [[saved]] = await conn.query('SELECT * FROM notifications WHERE id = ? LIMIT 1', [notificationId]);
+    return saved ? formatNotificationRecord(saved) : null;
+};
+
 const getAuthenticatedUserId = (req) => {
+    const authorizationHeader = req.headers.authorization || '';
+    if (authorizationHeader.startsWith('Bearer ')) {
+        try {
+            const payload = verifyJwt(getAuthTokenFromRequest(req), JWT_SECRET);
+            return Number(payload.sub);
+        } catch (error) {
+            throw new AppError('Invalid or expired authorization token', 401);
+        }
+    }
+
     const sessionUserId = getSessionUserId(req);
     if (sessionUserId) {
         return sessionUserId;
     }
 
-    const payload = verifyJwt(getAuthTokenFromRequest(req), JWT_SECRET);
-    return Number(payload.sub);
+    throw new AppError('Authentication is required', 401);
 };
 
 const getAuthUserById = async (userId) => {
     const [[user]] = await db.query(`
         SELECT
-            u.id, u.name, u.email, u.status, u.last_login, u.created_at,
+            u.id, u.name, u.email, u.profile_picture_url, u.status, u.last_login, u.created_at,
             r.id AS role_id, r.name AS role,
             d.id AS department_id, d.name AS department
         FROM users u
@@ -424,7 +706,7 @@ const getAuthUserById = async (userId) => {
     `, [userId]);
 
     return {
-        ...user,
+        ...applyDefaultProfilePicture(user),
         permissions: permissionRows.map((permission) => permission.name)
     };
 };
@@ -444,6 +726,20 @@ const createAuthResponse = async (userId) => {
     return { token, user };
 };
 
+const withTimeout = (promise, timeoutMs, label) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+
+    Promise.resolve(promise)
+        .then((value) => {
+            clearTimeout(timer);
+            resolve(value);
+        })
+        .catch((error) => {
+            clearTimeout(timer);
+            reject(error);
+        });
+});
+
 const persistAuthenticatedSession = (req, userId) => new Promise((resolve, reject) => {
     req.session.regenerate((regenerateError) => {
         if (regenerateError) {
@@ -462,6 +758,18 @@ const persistAuthenticatedSession = (req, userId) => new Promise((resolve, rejec
         });
     });
 });
+
+const persistAuthenticatedSessionSafely = async (req, userId) => {
+    try {
+        await withTimeout(
+            persistAuthenticatedSession(req, userId),
+            SESSION_OPERATION_TIMEOUT_MS,
+            'Session persistence'
+        );
+    } catch (error) {
+        console.error(`[Auth] Session persistence skipped: ${error.message}`);
+    }
+};
 
 const destroyAuthenticatedSession = (req) => new Promise((resolve, reject) => {
     if (!req.session) {
@@ -528,22 +836,25 @@ const validateCompany = asyncHandler(async (req, res, next) => {
 
 // --- 5. ROUTES ---
 
-app.post('/api/auth/signup', asyncHandler(async (req, res) => {
+app.post('/api/auth/signup', upload.single('profile_picture'), asyncHandler(async (req, res) => {
     const {
         name,
         email,
         password,
         role_id,
-        department_id
+        department_id,
+        profile_picture_url
     } = req.body;
 
     if (!name || !email || !password) {
+        await cleanupManagedUpload(req.file?.path);
         throw new AppError('Name, email, and password are required', 400);
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
     const [[existingUser]] = await db.query('SELECT id FROM users WHERE email = ? LIMIT 1', [normalizedEmail]);
     if (existingUser) {
+        await cleanupManagedUpload(req.file?.path);
         throw new AppError('An account with that email already exists', 409);
     }
 
@@ -559,6 +870,9 @@ app.post('/api/auth/signup', asyncHandler(async (req, res) => {
     const [result] = await db.query('INSERT INTO users SET ?', [{
         name: String(name).trim(),
         email: normalizedEmail,
+        profile_picture_url: req.file
+            ? normalizePath(req.file.path)
+            : normalizeProfilePictureUrl(profile_picture_url),
         password_hash: passwordHash,
         role_id: resolvedRoleId,
         department_id: department_id || null,
@@ -576,9 +890,9 @@ app.post('/api/auth/signup', asyncHandler(async (req, res) => {
         }
     }
 
-    await persistAuthenticatedSession(req, result.insertId);
+    await persistAuthenticatedSessionSafely(req, result.insertId);
     const authPayload = await createAuthResponse(result.insertId);
-    res.status(201).json({ user: authPayload.user });
+    res.status(201).json(authPayload);
 }));
 
 app.post('/api/auth/login', asyncHandler(async (req, res) => {
@@ -602,9 +916,9 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
     }
 
     await db.query('UPDATE users SET last_login = NOW(), updated_at = NOW() WHERE id = ?', [user.id]);
-    await persistAuthenticatedSession(req, user.id);
+    await persistAuthenticatedSessionSafely(req, user.id);
     const authPayload = await createAuthResponse(user.id);
-    res.json({ user: authPayload.user });
+    res.json(authPayload);
 }));
 
 app.post('/api/auth/logout', asyncHandler(async (req, res) => {
@@ -622,20 +936,26 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req, res) => {
     res.json(user);
 }));
 
-app.put('/api/auth/profile', requireAuth, asyncHandler(async (req, res) => {
-    const { name, email, password } = req.body;
+app.put('/api/auth/profile', requireAuth, upload.single('profile_picture'), asyncHandler(async (req, res) => {
+    const { name, email, password, profile_picture_url } = req.body;
 
     if (!name || !email) {
+        await cleanupManagedUpload(req.file?.path);
         throw new AppError('Name and email are required', 400);
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
+    const [[existingUser]] = await db.query(
+        'SELECT profile_picture_url FROM users WHERE id = ? LIMIT 1',
+        [req.authUserId]
+    );
     const [[duplicateUser]] = await db.query(
         'SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1',
         [normalizedEmail, req.authUserId]
     );
 
     if (duplicateUser) {
+        await cleanupManagedUpload(req.file?.path);
         throw new AppError('An account with that email already exists', 409);
     }
 
@@ -648,7 +968,16 @@ app.put('/api/auth/profile', requireAuth, asyncHandler(async (req, res) => {
         updateData.password_hash = await bcrypt.hash(password, 10);
     }
 
+    if (req.file) {
+        updateData.profile_picture_url = normalizePath(req.file.path);
+    } else if (profile_picture_url !== undefined) {
+        updateData.profile_picture_url = normalizeProfilePictureUrl(profile_picture_url);
+    }
+
     await db.query('UPDATE users SET ?, updated_at = NOW() WHERE id = ?', [updateData, req.authUserId]);
+    if (updateData.profile_picture_url !== undefined && existingUser?.profile_picture_url !== updateData.profile_picture_url) {
+        await cleanupManagedUpload(existingUser.profile_picture_url);
+    }
     const user = await getAuthUserById(req.authUserId);
     res.json(user);
 }));
@@ -668,40 +997,161 @@ app.use('/api', (req, res, next) => {
 
 // --- COMPANY ROUTES ---
 app.get('/api/companies', asyncHandler(async (req, res) => {
-    const [rows] = await db.query('SELECT * FROM companies ORDER BY created_at DESC');
-    res.json(rows);
+    const includeInactive = ['1', 'true', 'yes'].includes(String(req.query.include_inactive || '').toLowerCase());
+    const [rows] = await db.query(`
+        SELECT ${COMPANY_SELECT_FIELDS}
+        FROM companies
+        ${includeInactive ? '' : `WHERE status <> 'inactive'`}
+        ORDER BY created_at DESC
+    `);
+    res.json(rows.map(mapCompanyRow));
 }));
 
-app.post('/api/company', asyncHandler(async (req, res) => {
-    if (req.body.name) req.body.name = req.body.name.trim();
-    const [result] = await db.query(`INSERT INTO companies SET ?, status = 'active'`, [req.body]);
-    const [[company]] = await db.query('SELECT * FROM companies WHERE id = ?', [result.insertId]);
+app.post('/api/company', upload.single('logo'), asyncHandler(async (req, res) => {
+    let companyData;
+    try {
+        companyData = buildCompanyPayload(req.body, { isCreate: true });
+    } catch (error) {
+        await cleanupManagedUpload(req.file?.path);
+        throw error;
+    }
+    if (req.file) {
+        companyData.logo_url = normalizePath(req.file.path);
+    }
+    const [result] = await db.query('INSERT INTO companies SET ?', [companyData]);
+    await ensureDefaultAccounts(result.insertId);
+    await createNotification(result.insertId, {
+        title: 'Company workspace created',
+        message: `${companyData.name} is now ready for use.`,
+        type: 'info',
+        priority: 'low',
+        action_url: '/company-profile'
+    });
+    const company = await getCompanyById(result.insertId);
     res.status(201).json(company);
 }));
 
-app.get('/api/company/:id', validateCompany, asyncHandler(async (req, res) => {
-    const [[company]] = await db.query('SELECT * FROM companies WHERE id = ?', [req.companyId]);
+app.get('/api/company/:id', asyncHandler(async (req, res) => {
+    const companyId = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(companyId)) {
+        throw new AppError('Invalid company ID', 400);
+    }
+
+    const company = await getCompanyById(companyId);
     res.json(company);
 }));
 
-app.put('/api/company/:id', validateCompany, asyncHandler(async (req, res) => {
-    await db.query('UPDATE companies SET ?, updated_at = NOW() WHERE id = ?', [req.body, req.companyId]);
-    const [[company]] = await db.query('SELECT * FROM companies WHERE id = ?', [req.companyId]);
+app.put('/api/company/:id', upload.single('logo'), asyncHandler(async (req, res) => {
+    const companyId = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(companyId)) {
+        await cleanupManagedUpload(req.file?.path);
+        throw new AppError('Invalid company ID', 400);
+    }
+
+    const existingCompany = await getCompanyById(companyId);
+    let updateData;
+    try {
+        updateData = buildCompanyPayload(req.body, { allowEmpty: Boolean(req.file) });
+    } catch (error) {
+        await cleanupManagedUpload(req.file?.path);
+        throw error;
+    }
+    if (req.file) {
+        updateData.logo_url = normalizePath(req.file.path);
+    }
+    await db.query('UPDATE companies SET ?, updated_at = NOW() WHERE id = ?', [updateData, companyId]);
+    if (updateData.logo_url !== undefined && existingCompany.logo_url !== updateData.logo_url) {
+        await cleanupManagedUpload(existingCompany.logo_url);
+    }
+    const company = await getCompanyById(companyId);
     res.json(company);
+}));
+
+app.delete('/api/company/:id', asyncHandler(async (req, res) => {
+    const companyId = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(companyId)) {
+        throw new AppError('Invalid company ID', 400);
+    }
+
+    const company = await getCompanyById(companyId);
+    await db.query('UPDATE companies SET status = ?, updated_at = NOW() WHERE id = ?', ['inactive', companyId]);
+    const archivedCompany = await getCompanyById(companyId);
+
+    res.json({
+        success: true,
+        message: `${company.name} archived successfully`,
+        company: archivedCompany
+    });
+}));
+
+app.get('/api/company/:companyId/notifications', validateCompany, asyncHandler(async (req, res) => {
+    const [rows] = await db.query(
+        `SELECT *
+         FROM notifications
+         WHERE company_id = ?
+         ORDER BY is_read ASC, created_at DESC`,
+        [req.companyId]
+    );
+
+    const notifications = rows.map(formatNotificationRecord);
+    res.json({
+        notifications,
+        unreadCount: notifications.filter((notification) => !notification.is_read).length
+    });
+}));
+
+app.post('/api/company/:companyId/notifications', validateCompany, asyncHandler(async (req, res) => {
+    const notification = await createNotification(req.companyId, req.body);
+    res.status(201).json(notification);
+}));
+
+app.patch('/api/company/:companyId/notifications/:notificationId/read', validateCompany, asyncHandler(async (req, res) => {
+    const [result] = await db.query(
+        `UPDATE notifications
+         SET is_read = 1, updated_at = NOW()
+         WHERE id = ? AND company_id = ?`,
+        [req.params.notificationId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Notification not found', 404);
+    }
+
+    const [[notification]] = await db.query(
+        'SELECT * FROM notifications WHERE id = ? AND company_id = ? LIMIT 1',
+        [req.params.notificationId, req.companyId]
+    );
+
+    res.json(formatNotificationRecord(notification));
 }));
 
 // --- MEMBER ROUTES (UNIFIED REGISTRY) ---
 app.get('/api/company/:companyId/members', validateCompany, asyncHandler(async (req, res) => {
-    const [rows] = await db.query('SELECT * FROM company_members WHERE company_id = ?', [req.companyId]);
-    res.json(rows);
+    const [rows] = await db.query(
+        'SELECT * FROM company_members WHERE company_id = ? ORDER BY join_date DESC, created_at DESC',
+        [req.companyId]
+    );
+    res.json(rows.map((row) => ({
+        ...row,
+        role: row.role || row.member_type || null,
+        shares_held: toNumber(row.shares_held)
+    })));
 }));
 
 app.post('/api/company/:companyId/members', upload.single('file'), validateCompany, asyncHandler(async (req, res) => {
     const memberData = {
-        ...req.body,
         company_id: req.companyId,
+        name: normalizeRequiredString(req.body.name, 'Member name'),
+        role: normalizeOptionalString(req.body.role ?? req.body.member_type),
+        nationality: normalizeOptionalString(req.body.nationality),
+        national_id: normalizeOptionalString(req.body.national_id),
+        email: normalizeOptionalEmail(req.body.email),
+        phone: normalizeOptionalString(req.body.phone),
+        address: normalizeOptionalString(req.body.address),
+        shares_held: toNumber(req.body.shares_held),
+        is_beneficial_owner: ['1', 'true', 'yes'].includes(String(req.body.is_beneficial_owner || '').toLowerCase()) ? 1 : 0,
         document_path: normalizePath(req.file?.path),
-        join_date: req.body.join_date || new Date().toISOString().split('T')[0],
+        join_date: req.body.join_date || getTodayDate(),
         status: req.body.status || 'Active'
     };
     const [result] = await db.query('INSERT INTO company_members SET ?', [memberData]);
@@ -715,7 +1165,20 @@ app.put('/api/company/:companyId/members/:memberId', upload.single('file'), vali
     if (!oldMember) throw new AppError('Member not found', 404);
 
     const updateData = {
-        ...req.body,
+        ...(req.body.name !== undefined && { name: normalizeRequiredString(req.body.name, 'Member name') }),
+        ...(req.body.role !== undefined || req.body.member_type !== undefined
+            ? { role: normalizeOptionalString(req.body.role ?? req.body.member_type) }
+            : {}),
+        ...(req.body.nationality !== undefined && { nationality: normalizeOptionalString(req.body.nationality) }),
+        ...(req.body.national_id !== undefined && { national_id: normalizeOptionalString(req.body.national_id) }),
+        ...(req.body.email !== undefined && { email: normalizeOptionalEmail(req.body.email) }),
+        ...(req.body.phone !== undefined && { phone: normalizeOptionalString(req.body.phone) }),
+        ...(req.body.address !== undefined && { address: normalizeOptionalString(req.body.address) }),
+        ...(req.body.shares_held !== undefined && { shares_held: toNumber(req.body.shares_held) }),
+        ...(req.body.is_beneficial_owner !== undefined && {
+            is_beneficial_owner: ['1', 'true', 'yes'].includes(String(req.body.is_beneficial_owner).toLowerCase()) ? 1 : 0
+        }),
+        ...(req.body.join_date !== undefined && { join_date: normalizeDateOnly(req.body.join_date, 'Join date') }),
         document_path: req.file ? normalizePath(req.file.path) : oldMember.document_path,
         status: req.body.status || 'Active'
     };
@@ -1236,12 +1699,47 @@ app.delete('/api/company/:companyId/business-plans/:planId', validateCompany, as
 }));
 // --- SHARE CERTIFICATE ROUTES ---
 app.get('/api/company/:companyId/certificates', validateCompany, asyncHandler(async (req, res) => {
-    const [rows] = await db.query('SELECT * FROM share_certificates WHERE company_id = ?', [req.companyId]);
+    const [rows] = await db.query(`
+        SELECT
+            sc.*,
+            COALESCE(sc.holder_name, cm.name) AS holder_name
+        FROM share_certificates sc
+        LEFT JOIN company_members cm ON cm.id = sc.member_id
+        WHERE sc.company_id = ?
+        ORDER BY sc.issue_date DESC, sc.created_at DESC
+    `, [req.companyId]);
     res.json(rows);
 }));
 
 app.post('/api/company/:companyId/certificates', validateCompany, asyncHandler(async (req, res) => {
-    const [result] = await db.query('INSERT INTO share_certificates SET ?', { ...req.body, company_id: req.companyId });
+    const certificateNo = normalizeRequiredString(req.body.certificate_no ?? req.body.certificate_number, 'Certificate number');
+    const holderName = normalizeRequiredString(req.body.holder_name, 'Holder name');
+    const issueDate = normalizeDateOnly(req.body.issue_date, 'Issue date');
+    const sharesCount = toNumber(req.body.shares_count);
+
+    if (!sharesCount || sharesCount <= 0) {
+        throw new AppError('Shares count must be greater than zero', 400);
+    }
+
+    let resolvedMemberId = req.body.member_id ? Number(req.body.member_id) : null;
+    if (!resolvedMemberId) {
+        const [[member]] = await db.query(
+            'SELECT id FROM company_members WHERE company_id = ? AND name = ? LIMIT 1',
+            [req.companyId, holderName]
+        );
+        resolvedMemberId = member ? Number(member.id) : null;
+    }
+
+    const [result] = await db.query('INSERT INTO share_certificates SET ?', {
+        company_id: req.companyId,
+        member_id: resolvedMemberId,
+        certificate_no: certificateNo,
+        holder_name: holderName,
+        shares_count: sharesCount,
+        issue_date: issueDate,
+        status: normalizeOptionalString(req.body.status) || 'active',
+        notes: normalizeOptionalString(req.body.notes)
+    });
     const [[newCert]] = await db.query('SELECT * FROM share_certificates WHERE id = ?', [result.insertId]);
     res.status(201).json(newCert);
 }));
@@ -1388,7 +1886,7 @@ app.get('/api/company/:companyId/accounting-books', validateCompany, asyncHandle
         SELECT
             gl.id,
             je.id AS journal_entry_id,
-            je.date,
+            je.entry_date AS date,
             COALESCE(je.reference_no, CONCAT('JE-', LPAD(je.id, 6, '0'))) AS reference,
             a.id AS account_id,
             a.code AS account_code,
@@ -1403,9 +1901,9 @@ app.get('/api/company/:companyId/accounting-books', validateCompany, asyncHandle
         FROM journal_entries je
         INNER JOIN general_ledger gl ON gl.journal_entry_id = je.id
         INNER JOIN accounts a ON a.id = gl.account_id
-        LEFT JOIN supporting_documents sd ON sd.journal_entry_id = je.id
+        LEFT JOIN supporting_documents sd ON sd.journal_entry_id = je.id AND sd.company_id = je.company_id
         WHERE je.company_id = ?
-        ORDER BY je.date DESC, je.created_at DESC, gl.id DESC
+        ORDER BY je.entry_date DESC, je.created_at DESC, gl.id DESC
     `, [req.companyId]);
 
     const [summaryRows] = await db.query(`
@@ -1451,11 +1949,12 @@ app.get('/api/company/:companyId/accounting-books/accounts', validateCompany, as
 // 4. GET Journal Entries (History)
 app.get('/api/company/:companyId/ledger/entries', validateCompany, asyncHandler(async (req, res) => {
     const [rows] = await db.query(`
-        SELECT je.*, 
+        SELECT je.*,
+               je.entry_date AS date,
                (SELECT SUM(debit) FROM general_ledger WHERE journal_entry_id = je.id) as total_amount
         FROM journal_entries je 
         WHERE je.company_id = ? 
-        ORDER BY je.date DESC, je.created_at DESC`, 
+        ORDER BY je.entry_date DESC, je.created_at DESC`, 
         [req.companyId]
     );
     res.json(rows);
@@ -1509,7 +2008,7 @@ app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single(
 
         const [jeResult] = await conn.query('INSERT INTO journal_entries SET ?', {
             company_id: req.companyId,
-            date,
+            entry_date: date,
             description,
             entry_type: entryType || 'manual',
             reference_no: reference_no || null
@@ -1518,6 +2017,7 @@ app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single(
         const journalId = jeResult.insertId;
 
         await conn.query('INSERT INTO general_ledger SET ?', {
+            company_id: req.companyId,
             journal_entry_id: journalId,
             account_id: Number(account_id),
             debit: debitValue,
@@ -1525,6 +2025,7 @@ app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single(
         });
 
         await conn.query('INSERT INTO general_ledger SET ?', {
+            company_id: req.companyId,
             journal_entry_id: journalId,
             account_id: Number(offset_account_id),
             debit: creditValue,
@@ -1533,10 +2034,10 @@ app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single(
 
         if (req.file) {
             await conn.query('INSERT INTO supporting_documents SET ?', {
+                company_id: req.companyId,
                 journal_entry_id: journalId,
                 file_name: req.file.originalname,
-                file_path: normalizePath(req.file.path),
-                file_type: req.file.mimetype
+                file_path: normalizePath(req.file.path)
             });
         }
 
@@ -1575,7 +2076,7 @@ app.post('/api/company/:companyId/accounting-books/transactions', validateCompan
 
         const [jeResult] = await conn.query('INSERT INTO journal_entries SET ?', {
             company_id: req.companyId,
-            date,
+            entry_date: date,
             description,
             entry_type: source_type || 'manual',
             reference_no: reference || null
@@ -1585,6 +2086,7 @@ app.post('/api/company/:companyId/accounting-books/transactions', validateCompan
         for (const line of entries) {
             const account = await ensureAccountByCode(req.companyId, line, conn);
             await conn.query('INSERT INTO general_ledger SET ?', {
+                company_id: req.companyId,
                 journal_entry_id: journalId,
                 account_id: account.id,
                 debit: Number(line.debit || 0),
@@ -1625,7 +2127,7 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
 
         const [jeResult] = await conn.query('INSERT INTO journal_entries SET ?', {
             company_id: req.companyId,
-            date,
+            entry_date: date,
             description,
             entry_type: entryType,
             reference_no: req.body.reference_no || null
@@ -1633,6 +2135,7 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
         const journalId = jeResult.insertId;
 
         await conn.query('INSERT INTO general_ledger SET ?', {
+            company_id: req.companyId,
             journal_entry_id: journalId,
             account_id: account_id,
             debit: debit || 0,
@@ -1640,6 +2143,7 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
         });
 
         await conn.query('INSERT INTO general_ledger SET ?', {
+            company_id: req.companyId,
             journal_entry_id: journalId,
             account_id: offset_account_id,
             debit: credit || 0,
@@ -1648,10 +2152,10 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
 
         if (req.file) {
             await conn.query('INSERT INTO supporting_documents SET ?', {
+                company_id: req.companyId,
                 journal_entry_id: journalId,
                 file_name: req.file.originalname,
-                file_path: normalizePath(req.file.path),
-                file_type: req.file.mimetype
+                file_path: normalizePath(req.file.path)
             });
         }
 
@@ -1668,16 +2172,18 @@ app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), valid
 
 // 8. GET Financial Trial Balance
 app.get('/api/company/:companyId/ledger/trial-balance', validateCompany, asyncHandler(async (req, res) => {
+    const asOfDate = req.query.as_of ? String(req.query.as_of) : null;
     const [rows] = await db.query(`
         SELECT a.name, a.code, a.category,
-               SUM(gl.debit) as total_debit,
-               SUM(gl.credit) as total_credit,
-               (SUM(gl.debit) - SUM(gl.credit)) as net_balance
+               COALESCE(SUM(CASE WHEN ? IS NULL OR je.entry_date <= ? THEN gl.debit ELSE 0 END), 0) as total_debit,
+               COALESCE(SUM(CASE WHEN ? IS NULL OR je.entry_date <= ? THEN gl.credit ELSE 0 END), 0) as total_credit,
+               COALESCE(SUM(CASE WHEN ? IS NULL OR je.entry_date <= ? THEN gl.debit - gl.credit ELSE 0 END), 0) as net_balance
         FROM accounts a
         LEFT JOIN general_ledger gl ON a.id = gl.account_id
+        LEFT JOIN journal_entries je ON je.id = gl.journal_entry_id
         WHERE a.company_id = ?
         GROUP BY a.id`, 
-        [req.companyId]
+        [asOfDate, asOfDate, asOfDate, asOfDate, asOfDate, asOfDate, req.companyId]
     );
     res.json(rows);
 }));
@@ -2257,25 +2763,7 @@ app.patch('/api/company/:companyId/employees/:employeeId/status', validateCompan
 
 app.get('/api/company/:companyId/payroll-records', validateCompany, asyncHandler(async (req, res) => {
     const params = [req.companyId];
-    let sql = `
-        SELECT
-            pr.*,
-            e.full_name AS employee_full_name,
-            e.email AS employee_email,
-            e.phone AS employee_phone,
-            e.national_id AS employee_national_id,
-            e.position AS employee_position,
-            e.department AS employee_department,
-            e.start_date AS employee_start_date,
-            e.gross_salary AS employee_gross_salary,
-            e.rssb_number AS employee_rssb_number,
-            e.status AS employee_status,
-            e.contract_file_name AS employee_contract_file_name,
-            e.contract_file_path AS employee_contract_file_path
-        FROM payroll_records pr
-        JOIN employees e ON e.id = pr.employee_id
-        WHERE pr.company_id = ?
-    `;
+    let sql = PAYROLL_RECORD_SELECT;
 
     if (req.query.month) {
         sql += ' AND pr.payroll_month = ?';
@@ -2286,16 +2774,7 @@ app.get('/api/company/:companyId/payroll-records', validateCompany, asyncHandler
 
     const [rows] = await db.query(sql, params);
     const records = rows.map(formatPayrollRecord);
-    const summary = {
-        totalEmployees: records.length,
-        totalGrossPay: records.reduce((sum, record) => sum + record.gross_salary, 0),
-        totalPaye: records.reduce((sum, record) => sum + record.paye_tax, 0),
-        totalRssbEmployee: records.reduce((sum, record) => sum + record.rssb_employee, 0),
-        totalRssbEmployer: records.reduce((sum, record) => sum + record.rssb_employer, 0),
-        totalNetPay: records.reduce((sum, record) => sum + record.net_salary, 0),
-        paidCount: records.filter((record) => record.status === 'paid').length,
-        unpaidCount: records.filter((record) => record.status === 'unpaid').length
-    };
+    const summary = buildPayrollSummary(records, req.query.month ? String(req.query.month) : undefined);
 
     res.json({ records, summary });
 }));
@@ -2306,6 +2785,18 @@ app.post('/api/company/:companyId/payroll-records/generate', validateCompany, as
 
     if (!/^\d{4}-\d{2}$/.test(payrollMonth)) {
         throw new AppError('Payroll month must be in YYYY-MM format', 400);
+    }
+
+    const [[postedMonth]] = await db.query(
+        `SELECT accounting_journal_id
+         FROM payroll_records
+         WHERE company_id = ? AND payroll_month = ? AND accounting_journal_id IS NOT NULL
+         LIMIT 1`,
+        [req.companyId, payrollMonth]
+    );
+
+    if (postedMonth) {
+        throw new AppError('Payroll for this month has already been posted to accounting and cannot be regenerated', 409);
     }
 
     const [employees] = await db.query(
@@ -2338,7 +2829,9 @@ app.post('/api/company/:companyId/payroll-records/generate', validateCompany, as
                 rssb_employer: rssb.employer,
                 net_salary: netSalary,
                 status: 'unpaid',
-                paid_at: null
+                paid_at: null,
+                accounting_journal_id: null,
+                accounting_posted_at: null
             };
 
             const [existingRows] = await connection.query(
@@ -2369,75 +2862,217 @@ app.post('/api/company/:companyId/payroll-records/generate', validateCompany, as
         connection.release();
     }
 
-    const [rows] = await db.query(`
-        SELECT
-            pr.*,
-            e.full_name AS employee_full_name,
-            e.email AS employee_email,
-            e.phone AS employee_phone,
-            e.national_id AS employee_national_id,
-            e.position AS employee_position,
-            e.department AS employee_department,
-            e.start_date AS employee_start_date,
-            e.gross_salary AS employee_gross_salary,
-            e.rssb_number AS employee_rssb_number,
-            e.status AS employee_status,
-            e.contract_file_name AS employee_contract_file_name,
-            e.contract_file_path AS employee_contract_file_path
-        FROM payroll_records pr
-        JOIN employees e ON e.id = pr.employee_id
-        WHERE pr.company_id = ? AND pr.payroll_month = ?
-        ORDER BY e.full_name ASC
-    `, [req.companyId, payrollMonth]);
+    const [rows] = await db.query(
+        `${PAYROLL_RECORD_SELECT} AND pr.payroll_month = ? ORDER BY e.full_name ASC`,
+        [req.companyId, payrollMonth]
+    );
 
     const records = rows.map(formatPayrollRecord);
-    const summary = {
-        month: payrollMonth,
-        totalEmployees: records.length,
-        totalGrossPay: records.reduce((sum, record) => sum + record.gross_salary, 0),
-        totalPaye: records.reduce((sum, record) => sum + record.paye_tax, 0),
-        totalRssbEmployee: records.reduce((sum, record) => sum + record.rssb_employee, 0),
-        totalRssbEmployer: records.reduce((sum, record) => sum + record.rssb_employer, 0),
-        totalNetPay: records.reduce((sum, record) => sum + record.net_salary, 0),
-        paidCount: records.filter((record) => record.status === 'paid').length,
-        unpaidCount: records.filter((record) => record.status === 'unpaid').length
-    };
+    const summary = buildPayrollSummary(records, payrollMonth);
+    await createNotification(req.companyId, {
+        title: 'Payroll generated',
+        message: `Payroll for ${payrollMonth} was generated for ${records.length} employee(s).`,
+        type: 'info',
+        priority: 'medium',
+        action_url: '/payroll-hr'
+    });
 
     res.status(201).json({ records, summary });
 }));
 
-app.patch('/api/company/:companyId/payroll-records/:payrollId/paid', validateCompany, asyncHandler(async (req, res) => {
-    const [result] = await db.query(
-        `UPDATE payroll_records
-         SET status = 'paid', paid_at = NOW(), updated_at = NOW()
-         WHERE id = ? AND company_id = ?`,
-        [req.params.payrollId, req.companyId]
-    );
-
-    if (result.affectedRows === 0) {
-        throw new AppError('Payroll record not found', 404);
+app.post('/api/company/:companyId/payroll-records/post-to-accounting', validateCompany, asyncHandler(async (req, res) => {
+    const payrollMonth = String(req.body.payroll_month || '').trim();
+    if (!/^\d{4}-\d{2}$/.test(payrollMonth)) {
+        throw new AppError('Payroll month must be in YYYY-MM format', 400);
     }
 
-    const [[row]] = await db.query(`
-        SELECT
-            pr.*,
-            e.full_name AS employee_full_name,
-            e.email AS employee_email,
-            e.phone AS employee_phone,
-            e.national_id AS employee_national_id,
-            e.position AS employee_position,
-            e.department AS employee_department,
-            e.start_date AS employee_start_date,
-            e.gross_salary AS employee_gross_salary,
-            e.rssb_number AS employee_rssb_number,
-            e.status AS employee_status,
-            e.contract_file_name AS employee_contract_file_name,
-            e.contract_file_path AS employee_contract_file_path
-        FROM payroll_records pr
-        JOIN employees e ON e.id = pr.employee_id
-        WHERE pr.id = ? AND pr.company_id = ?
-        LIMIT 1
-    `, [req.params.payrollId, req.companyId]);
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        await ensureDefaultAccounts(req.companyId, connection);
+
+        const [rows] = await connection.query(
+            `${PAYROLL_RECORD_SELECT} AND pr.payroll_month = ? ORDER BY e.full_name ASC`,
+            [req.companyId, payrollMonth]
+        );
+
+        if (!rows.length) {
+            throw new AppError('No payroll records found for the selected month', 404);
+        }
+
+        const records = rows.map(formatPayrollRecord);
+        if (records.some((record) => record.accounting_journal_id)) {
+            throw new AppError('Payroll for this month has already been posted to accounting', 409);
+        }
+
+        const summary = buildPayrollSummary(records, payrollMonth);
+        const reference = `PAYROLL-${payrollMonth}`;
+        const description = `Payroll accrual for ${payrollMonth}`;
+        const payDate = records[0]?.pay_date || getTodayDate();
+
+        const [journalResult] = await connection.query('INSERT INTO journal_entries SET ?', {
+            company_id: req.companyId,
+            entry_date: payDate,
+            description,
+            entry_type: 'payroll',
+            reference_no: reference
+        });
+
+        const journalId = journalResult.insertId;
+        const accountingLines = [
+            { account_code: '5002', account_name: 'Salaries & Wages', debit: summary.totalGrossPay + summary.totalRssbEmployer, credit: 0 },
+            { account_code: '2201', account_name: 'Accrued Expenses', debit: 0, credit: summary.totalNetPay },
+            { account_code: '2102', account_name: 'PAYE Payable', debit: 0, credit: summary.totalPaye },
+            {
+                account_code: '2103',
+                account_name: 'RSSB Payable',
+                debit: 0,
+                credit: summary.totalRssbEmployee + summary.totalRssbEmployer
+            }
+        ].filter((line) => Number(line.debit || 0) > 0 || Number(line.credit || 0) > 0);
+
+        for (const line of accountingLines) {
+            const account = await ensureAccountByCode(req.companyId, line, connection);
+            await connection.query('INSERT INTO general_ledger SET ?', {
+                company_id: req.companyId,
+                journal_entry_id: journalId,
+                account_id: account.id,
+                debit: Number(line.debit || 0),
+                credit: Number(line.credit || 0)
+            });
+        }
+
+        await connection.query(
+            `UPDATE payroll_records
+             SET accounting_journal_id = ?, accounting_posted_at = NOW(), updated_at = NOW()
+             WHERE company_id = ? AND payroll_month = ?`,
+            [journalId, req.companyId, payrollMonth]
+        );
+
+        await createNotification(req.companyId, {
+            title: 'Payroll posted to accounting',
+            message: `Payroll for ${payrollMonth} has been posted to the accounting books.`,
+            type: 'info',
+            priority: 'medium',
+            action_url: '/accounting-books'
+        }, connection);
+
+        await connection.commit();
+
+        const [savedRows] = await db.query(
+            `${PAYROLL_RECORD_SELECT} AND pr.payroll_month = ? ORDER BY e.full_name ASC`,
+            [req.companyId, payrollMonth]
+        );
+        const savedRecords = savedRows.map(formatPayrollRecord);
+
+        res.status(201).json({
+            records: savedRecords,
+            summary: buildPayrollSummary(savedRecords, payrollMonth),
+            journalId,
+            reference
+        });
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+}));
+
+app.patch('/api/company/:companyId/payroll-records/:payrollId/paid', validateCompany, asyncHandler(async (req, res) => {
+    const payrollId = Number.parseInt(req.params.payrollId, 10);
+    if (Number.isNaN(payrollId)) {
+        throw new AppError('Invalid payroll record ID', 400);
+    }
+
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        await ensureDefaultAccounts(req.companyId, connection);
+
+        const [rows] = await connection.query(
+            `${PAYROLL_RECORD_SELECT} AND pr.id = ? LIMIT 1`,
+            [req.companyId, payrollId]
+        );
+
+        if (!rows.length) {
+            throw new AppError('Payroll record not found', 404);
+        }
+
+        const record = formatPayrollRecord(rows[0]);
+        if (!record.accounting_journal_id) {
+            throw new AppError('Post this payroll month to accounting before marking it as paid', 409);
+        }
+
+        const paymentReference = `PAYROLL-PAY-${record.id}`;
+        const [[existingPaymentJournal]] = await connection.query(
+            'SELECT id FROM journal_entries WHERE company_id = ? AND reference_no = ? LIMIT 1',
+            [req.companyId, paymentReference]
+        );
+
+        if (!existingPaymentJournal) {
+            const paymentDate = getTodayDate();
+            const [journalResult] = await connection.query('INSERT INTO journal_entries SET ?', {
+                company_id: req.companyId,
+                entry_date: paymentDate,
+                description: `Payroll payment - ${record.employee?.full_name || 'Employee'} - ${record.payroll_month}`,
+                entry_type: 'payment',
+                reference_no: paymentReference
+            });
+
+            const paymentJournalId = journalResult.insertId;
+            const accruedExpenseAccount = await ensureAccountByCode(req.companyId, {
+                account_code: '2201',
+                account_name: 'Accrued Expenses'
+            }, connection);
+            const cashAccount = await ensureAccountByCode(req.companyId, {
+                account_code: '1001',
+                account_name: 'Cash at Bank'
+            }, connection);
+
+            await connection.query('INSERT INTO general_ledger SET ?', {
+                company_id: req.companyId,
+                journal_entry_id: paymentJournalId,
+                account_id: accruedExpenseAccount.id,
+                debit: record.net_salary,
+                credit: 0
+            });
+            await connection.query('INSERT INTO general_ledger SET ?', {
+                company_id: req.companyId,
+                journal_entry_id: paymentJournalId,
+                account_id: cashAccount.id,
+                debit: 0,
+                credit: record.net_salary
+            });
+        }
+
+        await connection.query(
+            `UPDATE payroll_records
+             SET status = 'paid', paid_at = COALESCE(paid_at, NOW()), updated_at = NOW()
+             WHERE id = ? AND company_id = ?`,
+            [payrollId, req.companyId]
+        );
+
+        await createNotification(req.companyId, {
+            title: 'Payroll payment recorded',
+            message: `${record.employee?.full_name || 'Employee'} was marked as paid for ${record.payroll_month}.`,
+            type: 'info',
+            priority: 'low',
+            action_url: '/general-ledger'
+        }, connection);
+
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+
+    const [[row]] = await db.query(
+        `${PAYROLL_RECORD_SELECT} AND pr.id = ? LIMIT 1`,
+        [req.companyId, payrollId]
+    );
 
     res.json(formatPayrollRecord(row));
 }));
@@ -2862,6 +3497,219 @@ app.put('/api/company/:companyId/settings', validateCompany, asyncHandler(async 
     const [[saved]] = await db.query('SELECT * FROM company_settings WHERE company_id = ? LIMIT 1', [req.companyId]);
     res.json(buildSettingsResponse(saved));
 }));
+
+app.get('/api/company/:companyId/system-health', validateCompany, asyncHandler(async (req, res) => {
+    const [
+        [transactionRows],
+        [userRows],
+        [taxRows],
+        [alertRows],
+        [recentJournals],
+        [recentInvoices],
+        [recentReturns],
+        [recentAlerts]
+    ] = await Promise.all([
+        db.query(`
+            SELECT
+                COUNT(DISTINCT je.id) AS totalTransactions,
+                COUNT(DISTINCT CASE WHEN sd.id IS NOT NULL THEN je.id END) AS documentedTransactions,
+                COALESCE(SUM(gl.debit), 0) AS totalDebits,
+                COALESCE(SUM(gl.credit), 0) AS totalCredits
+            FROM journal_entries je
+            LEFT JOIN general_ledger gl ON gl.journal_entry_id = je.id
+            LEFT JOIN supporting_documents sd ON sd.journal_entry_id = je.id AND sd.company_id = je.company_id
+            WHERE je.company_id = ?
+        `, [req.companyId]),
+        db.query(`
+            SELECT
+                COUNT(*) AS totalUsers,
+                COALESCE(SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END), 0) AS activeUsers
+            FROM users
+        `),
+        db.query(`
+            SELECT
+                COUNT(*) AS totalReturns,
+                COALESCE(SUM(CASE WHEN status = 'Filed' THEN 1 ELSE 0 END), 0) AS filedReturns,
+                COALESCE(SUM(CASE WHEN status <> 'Filed' THEN 1 ELSE 0 END), 0) AS pendingReturns,
+                COALESCE(SUM(CASE WHEN status = 'Overdue' THEN 1 ELSE 0 END), 0) AS overdueReturns
+            FROM tax_returns
+            WHERE company_id = ?
+        `, [req.companyId]),
+        db.query(`
+            SELECT
+                COUNT(*) AS totalAlerts,
+                COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS activeAlerts,
+                COALESCE(SUM(CASE WHEN severity = 'high' AND status = 'active' THEN 1 ELSE 0 END), 0) AS criticalAlerts
+            FROM compliance_alerts
+            WHERE company_id = ?
+        `, [req.companyId]),
+        db.query(`
+            SELECT id, entry_date, description, reference_no, created_at
+            FROM journal_entries
+            WHERE company_id = ?
+            ORDER BY created_at DESC
+            LIMIT 4
+        `, [req.companyId]),
+        db.query(`
+            SELECT id, type, party_name, total, date, status, created_at
+            FROM invoice
+            WHERE company_id = ?
+            ORDER BY created_at DESC
+            LIMIT 4
+        `, [req.companyId]),
+        db.query(`
+            SELECT id, tax_type, period, status, due_date, updated_at
+            FROM tax_returns
+            WHERE company_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 4
+        `, [req.companyId]),
+        db.query(`
+            SELECT id, title, severity, status, due_date, created_by, updated_at
+            FROM compliance_alerts
+            WHERE company_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 4
+        `, [req.companyId])
+    ]);
+
+    const transactionStats = transactionRows[0] || {};
+    const userStats = userRows[0] || {};
+    const taxStats = taxRows[0] || {};
+    const alertStats = alertRows[0] || {};
+
+    const totalTransactions = Number(transactionStats.totalTransactions || 0);
+    const documentedTransactions = Number(transactionStats.documentedTransactions || 0);
+    const totalDebits = Number(transactionStats.totalDebits || 0);
+    const totalCredits = Number(transactionStats.totalCredits || 0);
+    const balanceDifference = Math.abs(totalDebits - totalCredits);
+
+    const totalUsers = Number(userStats.totalUsers || 0);
+    const activeUsers = Number(userStats.activeUsers || 0);
+    const totalReturns = Number(taxStats.totalReturns || 0);
+    const filedReturns = Number(taxStats.filedReturns || 0);
+    const pendingReturns = Number(taxStats.pendingReturns || 0);
+    const overdueReturns = Number(taxStats.overdueReturns || 0);
+    const activeAlerts = Number(alertStats.activeAlerts || 0);
+    const criticalAlerts = Number(alertStats.criticalAlerts || 0);
+
+    const ledgerBalanceScore = totalTransactions === 0
+        ? 100
+        : Math.max(0, Math.round(100 - Math.min(100, (balanceDifference / Math.max(totalDebits, 1)) * 100)));
+    const complianceScoreBase = totalReturns === 0 ? 100 : Math.round((filedReturns / totalReturns) * 100);
+    const complianceScore = Math.max(0, complianceScoreBase - criticalAlerts * 5 - overdueReturns * 10);
+    const userCoverageScore = totalUsers === 0 ? 0 : Math.round((activeUsers / totalUsers) * 100);
+    const documentationCoverageScore = totalTransactions === 0 ? 100 : Math.round((documentedTransactions / totalTransactions) * 100);
+
+    const recentActivity = [
+        ...recentJournals.map((entry) => ({
+            id: `journal-${entry.id}`,
+            category: 'journal',
+            title: entry.reference_no || `JE-${String(entry.id).padStart(6, '0')}`,
+            subtitle: entry.description,
+            occurred_at: entry.created_at,
+            status: 'posted',
+            meta: entry.entry_date,
+            actor: 'Accounting'
+        })),
+        ...recentInvoices.map((record) => ({
+            id: `invoice-${record.id}`,
+            category: record.type,
+            title: `${record.type === 'invoice' ? 'Invoice' : 'Receipt'} ${record.id}`,
+            subtitle: `${record.party_name} • ${Number(record.total || 0).toLocaleString()} RWF`,
+            occurred_at: record.created_at,
+            status: record.status,
+            meta: record.date,
+            actor: 'Billing'
+        })),
+        ...recentReturns.map((record) => ({
+            id: `tax-${record.id}`,
+            category: 'tax',
+            title: `${record.tax_type} return`,
+            subtitle: `${record.period} • ${record.status}`,
+            occurred_at: record.updated_at,
+            status: record.status,
+            meta: record.due_date,
+            actor: 'Tax'
+        })),
+        ...recentAlerts.map((record) => ({
+            id: `alert-${record.id}`,
+            category: 'alert',
+            title: record.title,
+            subtitle: `${record.severity} severity`,
+            occurred_at: record.updated_at,
+            status: record.status,
+            meta: record.due_date,
+            actor: record.created_by || 'System'
+        }))
+    ]
+        .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
+        .slice(0, 6);
+
+    const recommendations = [];
+
+    if (balanceDifference > 0.01) {
+        recommendations.push({
+            id: 'ledger-balance',
+            severity: 'critical',
+            title: 'Ledger is out of balance',
+            description: `Debits and credits differ by ${balanceDifference.toFixed(2)} RWF. Review the latest journal entries.`
+        });
+    }
+
+    if (pendingReturns > 0) {
+        recommendations.push({
+            id: 'tax-returns',
+            severity: overdueReturns > 0 ? 'critical' : 'warning',
+            title: overdueReturns > 0 ? 'Overdue tax returns detected' : 'Pending tax returns detected',
+            description: `${pendingReturns} tax return(s) still require filing${overdueReturns > 0 ? `, including ${overdueReturns} overdue item(s)` : ''}.`
+        });
+    }
+
+    if (activeAlerts > 0) {
+        recommendations.push({
+            id: 'alerts',
+            severity: criticalAlerts > 0 ? 'warning' : 'info',
+            title: 'Compliance alerts require review',
+            description: `${activeAlerts} active compliance alert(s) are open${criticalAlerts > 0 ? `, including ${criticalAlerts} critical alert(s)` : ''}.`
+        });
+    }
+
+    if (documentationCoverageScore < 70) {
+        recommendations.push({
+            id: 'documentation',
+            severity: 'info',
+            title: 'Supporting documents are incomplete',
+            description: `Only ${documentationCoverageScore}% of journal entries have an attached document.`
+        });
+    }
+
+    if (!recommendations.length) {
+        recommendations.push({
+            id: 'healthy',
+            severity: 'success',
+            title: 'System operating normally',
+            description: 'Ledger, compliance, and user activity checks are within expected thresholds.'
+        });
+    }
+
+    res.json({
+        overview: {
+            totalTransactions,
+            activeUsers,
+            activeAlerts,
+            pendingReturns
+        },
+        health: {
+            ledgerBalanceScore,
+            complianceScore,
+            userCoverageScore,
+            documentationCoverageScore
+        },
+        recentActivity,
+        recommendations
+    });
+}));
 // ==========================================
 // --- ROLES ROUTES ---
 // ==========================================
@@ -2970,7 +3818,7 @@ app.delete('/api/permissions/:id', asyncHandler(async (req, res) => {
 app.get('/api/users', asyncHandler(async (req, res) => {
     const [rows] = await db.query(`
         SELECT 
-            u.id, u.name, u.email, u.status, u.last_login, u.created_at,
+            u.id, u.name, u.email, u.profile_picture_url, u.status, u.last_login, u.created_at,
             r.id as role_id, r.name as role,
             d.id as department_id, d.name as department,
             GROUP_CONCAT(p.name ORDER BY p.name SEPARATOR ',') as permissions
@@ -2984,7 +3832,7 @@ app.get('/api/users', asyncHandler(async (req, res) => {
     `);
 
     const users = rows.map(u => ({
-        ...u,
+        ...applyDefaultProfilePicture(u),
         permissions: u.permissions ? u.permissions.split(',') : []
     }));
 
@@ -2994,7 +3842,7 @@ app.get('/api/users', asyncHandler(async (req, res) => {
 app.get('/api/users/:id', asyncHandler(async (req, res) => {
     const [[user]] = await db.query(`
         SELECT 
-            u.id, u.name, u.email, u.status, u.last_login, u.created_at,
+            u.id, u.name, u.email, u.profile_picture_url, u.status, u.last_login, u.created_at,
             r.id as role_id, r.name as role,
             d.id as department_id, d.name as department
         FROM users u
@@ -3011,11 +3859,11 @@ app.get('/api/users/:id', asyncHandler(async (req, res) => {
         WHERE up.user_id = ?
     `, [user.id]);
 
-    res.json({ ...user, permissions: perms.map(p => p.name) });
+    res.json({ ...applyDefaultProfilePicture(user), permissions: perms.map(p => p.name) });
 }));
 
 app.post('/api/users', asyncHandler(async (req, res) => {
-    const { name, email, password, role_id, department_id, status, permissions = [] } = req.body;
+    const { name, email, password, role_id, department_id, status, permissions = [], profile_picture_url } = req.body;
 
     if (!name || !email || !password) throw new AppError('Name, email and password are required', 400);
 
@@ -3024,6 +3872,7 @@ app.post('/api/users', asyncHandler(async (req, res) => {
     const [result] = await db.query('INSERT INTO users SET ?', [{
         name: name.trim(),
         email: email.trim().toLowerCase(),
+        profile_picture_url: normalizeProfilePictureUrl(profile_picture_url),
         password_hash,
         role_id: role_id || null,
         department_id: department_id || null,
@@ -3037,12 +3886,12 @@ app.post('/api/users', asyncHandler(async (req, res) => {
         await db.query('INSERT INTO user_permissions (user_id, permission_id) VALUES ?', [permRows]);
     }
 
-    const [[newUser]] = await db.query('SELECT id, name, email, status, created_at FROM users WHERE id = ?', [userId]);
-    res.status(201).json(newUser);
+    const [[newUser]] = await db.query('SELECT id, name, email, profile_picture_url, status, created_at FROM users WHERE id = ?', [userId]);
+    res.status(201).json(applyDefaultProfilePicture(newUser));
 }));
 
 app.put('/api/users/:id', asyncHandler(async (req, res) => {
-    const { name, email, password, role_id, department_id, status, permissions } = req.body;
+    const { name, email, password, role_id, department_id, status, permissions, profile_picture_url } = req.body;
 
     const [[existing]] = await db.query('SELECT id FROM users WHERE id = ?', [req.params.id]);
     if (!existing) throw new AppError('User not found', 404);
@@ -3052,7 +3901,8 @@ app.put('/api/users/:id', asyncHandler(async (req, res) => {
         ...(email && { email: email.trim().toLowerCase() }),
         ...(role_id !== undefined && { role_id }),
         ...(department_id !== undefined && { department_id }),
-        ...(status && { status })
+        ...(status && { status }),
+        ...(profile_picture_url !== undefined && { profile_picture_url: normalizeProfilePictureUrl(profile_picture_url) })
     };
 
     if (password) updateData.password_hash = await bcrypt.hash(password, 10);
@@ -3067,8 +3917,8 @@ app.put('/api/users/:id', asyncHandler(async (req, res) => {
         }
     }
 
-    const [[updatedUser]] = await db.query('SELECT id, name, email, status, updated_at FROM users WHERE id = ?', [req.params.id]);
-    res.json(updatedUser);
+    const [[updatedUser]] = await db.query('SELECT id, name, email, profile_picture_url, status, updated_at FROM users WHERE id = ?', [req.params.id]);
+    res.json(applyDefaultProfilePicture(updatedUser));
 }));
 
 app.patch('/api/users/:id/status', asyncHandler(async (req, res) => {

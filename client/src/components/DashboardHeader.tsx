@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import AuthService, { type AuthUser } from "@/services/authService";
+import { resolveAssetUrl } from "@/lib/api";
 import { Loader2, LogOut, UserCog } from "lucide-react";
 
 export function DashboardHeader() {
@@ -39,6 +40,7 @@ const emptyProfileForm = {
   name: "",
   email: "",
   password: "",
+  profile_picture_url: "",
 };
 
 export function DashboardUserMenu() {
@@ -49,6 +51,7 @@ export function DashboardUserMenu() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(() => AuthService.getUser());
   const [formData, setFormData] = useState(emptyProfileForm);
+  const [profilePictureFile, setProfilePictureFile] = useState<File | null>(null);
 
   useEffect(() => {
     const syncProfile = async () => {
@@ -72,7 +75,9 @@ export function DashboardUserMenu() {
       name: user.name || "",
       email: user.email || "",
       password: "",
+      profile_picture_url: user.profile_picture_url || "",
     });
+    setProfilePictureFile(null);
   }, [isProfileOpen, user]);
 
   const initials = useMemo(() => {
@@ -93,6 +98,8 @@ export function DashboardUserMenu() {
         name: formData.name,
         email: formData.email,
         password: formData.password || undefined,
+        profile_picture_url: formData.profile_picture_url || null,
+        profile_picture: profilePictureFile,
       });
 
       setUser(updatedUser);
@@ -131,6 +138,10 @@ export function DashboardUserMenu() {
         <DropdownMenuTrigger asChild disabled={isLoggingOut}>
           <Button variant="outline" className="h-11 gap-3 rounded-xl border-slate-200 px-3 shadow-sm">
             <Avatar className="h-8 w-8">
+              <AvatarImage
+                src={resolveAssetUrl(user?.profile_picture_url) || "/default-avatar.svg"}
+                alt={user?.name || "User"}
+              />
               <AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">
                 {initials || "U"}
               </AvatarFallback>
@@ -207,6 +218,18 @@ export function DashboardUserMenu() {
                 onChange={(event) => setFormData((current) => ({ ...current, password: event.target.value }))}
                 placeholder="Leave blank to keep the current password"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-picture">Profile Picture</Label>
+              <Input
+                id="profile-picture"
+                type="file"
+                accept="image/*"
+                onChange={(event) => setProfilePictureFile(event.target.files?.[0] || null)}
+              />
+              <p className="text-xs text-slate-500">
+                Leave this empty to keep the current profile picture.
+              </p>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsProfileOpen(false)}>

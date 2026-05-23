@@ -24,6 +24,7 @@ export default function SignUp() {
   const [password, setPassword] = useState("");
   const [roleId, setRoleId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
+  const [profilePicture, setProfilePicture] = useState<File | null>(null);
   const [roles, setRoles] = useState<OptionRecord[]>([]);
   const [departments, setDepartments] = useState<OptionRecord[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,8 +58,9 @@ export default function SignUp() {
         password,
         role_id: roleId ? Number(roleId) : null,
         department_id: departmentId ? Number(departmentId) : null,
+        profile_picture: profilePicture,
       });
-      navigate("/login", { replace: true });
+      navigate("/", { replace: true });
     } catch (error: any) {
       console.error("Signup failed:", error);
       toast({
@@ -152,6 +154,15 @@ export default function SignUp() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="signup-profile-picture">Profile Picture</Label>
+              <Input
+                id="signup-profile-picture"
+                type="file"
+                accept="image/*"
+                onChange={(event) => setProfilePicture(event.target.files?.[0] || null)}
+              />
             </div>
             <div className="rounded-lg border bg-slate-50 p-3 text-sm text-slate-600">
               <div className="flex items-center gap-2">

@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { 
-  ArrowLeft, Plus, Users, Shield, Edit, Trash2, 
-  Building2, Key, Loader2, Save, Info, CheckCircle2 
+  Plus, Users, Edit, Trash2, 
+  Building2, Key, Loader2, ShieldCheck
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
@@ -15,14 +16,47 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Link } from "react-router-dom";
 import { API_BASE as ROOT_API_BASE } from "@/services/companyApi";
+import { resolveAssetUrl } from "@/lib/api";
+import AuthService, { type AuthUser } from "@/services/authService";
 
 const API_BASE = `${ROOT_API_BASE}/api`;
 const api = axios.create({ baseURL: API_BASE, withCredentials: true });
 
+const RECENT_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+const buildInitials = (name?: string, email?: string) =>
+  (name || email || "User")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("");
+
+const hasRecentLogin = (lastLogin?: string | null) => {
+  if (!lastLogin) return false;
+  const timestamp = new Date(lastLogin).getTime();
+  return !Number.isNaN(timestamp) && Date.now() - timestamp <= RECENT_LOGIN_WINDOW_MS;
+};
+
+const formatLastLogin = (lastLogin?: string | null, isCurrentUser?: boolean) => {
+  if (isCurrentUser) {
+    return "Logged in on this session";
+  }
+
+  if (!lastLogin) {
+    return "No login recorded yet";
+  }
+
+  const parsed = new Date(lastLogin);
+  return Number.isNaN(parsed.getTime())
+    ? "Recent login recorded"
+    : `Last login: ${parsed.toLocaleString()}`;
+};
+
 export default function UserManagement() {
   const { toast } = useToast();
+  const [currentUser] = useState<AuthUser | null>(() => AuthService.getUser());
   
   // States for Database Data
   const [users, setUsers] = useState<any[]>([]);
@@ -74,6 +108,47 @@ export default function UserManagement() {
   }, [toast]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const usersByRole = useMemo(() => {
+    const counts = new Map<number, number>();
+    users.forEach((user) => {
+      if (user.role_id) {
+        counts.set(user.role_id, (counts.get(user.role_id) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [users]);
+
+  const usersByDepartment = useMemo(() => {
+    const counts = new Map<number, number>();
+    users.forEach((user) => {
+      if (user.department_id) {
+        counts.set(user.department_id, (counts.get(user.department_id) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [users]);
+
+  const usersByPermission = useMemo(() => {
+    const counts = new Map<string, number>();
+    users.forEach((user) => {
+      const assignedPermissions = Array.isArray(user.permissions) ? user.permissions : [];
+      assignedPermissions.forEach((permissionName: string) => {
+        counts.set(permissionName, (counts.get(permissionName) || 0) + 1);
+      });
+    });
+    return counts;
+  }, [users]);
+
+  const totalPermissionAssignments = useMemo(() => {
+    let total = 0;
+    usersByPermission.forEach((count) => {
+      total += count;
+    });
+    return total;
+  }, [usersByPermission]);
+
+  const currentUserId = currentUser?.id ?? null;
 
   // --- Actions ---
   const handleOpenModal = (item?: any) => {
@@ -157,7 +232,53 @@ export default function UserManagement() {
         </Button>
       </div>
 
-      <Tabs defaultValue="users" onValueChange={setActiveTab}>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Card>
+          <CardContent className="flex items-center justify-between p-5">
+            <div>
+              <div className="text-2xl font-bold">{users.length}</div>
+              <div className="text-sm text-muted-foreground">Total Users</div>
+            </div>
+            <Users className="h-8 w-8 text-blue-600" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center justify-between p-5">
+            <div>
+              <div className="text-2xl font-bold">{roles.length}</div>
+              <div className="text-sm text-muted-foreground">Roles</div>
+              <div className="text-xs text-muted-foreground">
+                {roles.reduce((sum, role) => sum + (usersByRole.get(role.id) || 0), 0)} assignments
+              </div>
+            </div>
+            <ShieldCheck className="h-8 w-8 text-emerald-600" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center justify-between p-5">
+            <div>
+              <div className="text-2xl font-bold">{departments.length}</div>
+              <div className="text-sm text-muted-foreground">Departments</div>
+              <div className="text-xs text-muted-foreground">
+                {departments.reduce((sum, department) => sum + (usersByDepartment.get(department.id) || 0), 0)} assignments
+              </div>
+            </div>
+            <Building2 className="h-8 w-8 text-orange-600" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center justify-between p-5">
+            <div>
+              <div className="text-2xl font-bold">{permissions.length}</div>
+              <div className="text-sm text-muted-foreground">Permissions</div>
+              <div className="text-xs text-muted-foreground">{totalPermissionAssignments} assignments</div>
+            </div>
+            <Key className="h-8 w-8 text-violet-600" />
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="mb-4">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="roles">Roles</TabsTrigger>
@@ -175,9 +296,12 @@ export default function UserManagement() {
                     {tab === "users" && (
                       <>
                         <TableHead>Role</TableHead>
+                        <TableHead>Department</TableHead>
+                        <TableHead>Permissions</TableHead>
                         <TableHead>Status</TableHead>
                       </>
                     )}
+                    {tab !== "users" && <TableHead>Assigned Users</TableHead>}
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -185,14 +309,68 @@ export default function UserManagement() {
                   {(tab === "users" ? users : tab === "roles" ? roles : tab === "departments" ? departments : permissions).map((item: any) => (
                     <TableRow key={item.id}>
                       <TableCell>
-                        <div className="font-medium">{item.name}</div>
-                        {item.email && <div className="text-xs text-muted-foreground">{item.email}</div>}
+                        {tab === "users" ? (
+                          <div className="flex items-center gap-3">
+                            <div className="relative">
+                              <Avatar className="h-10 w-10 border border-slate-200">
+                                <AvatarImage
+                                  src={resolveAssetUrl(item.profile_picture_url) || "/default-avatar.svg"}
+                                  alt={item.name || "User"}
+                                />
+                                <AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">
+                                  {buildInitials(item.name, item.email)}
+                                </AvatarFallback>
+                              </Avatar>
+                              {(item.id === currentUserId || hasRecentLogin(item.last_login)) && (
+                                <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 font-medium">
+                                <span className="truncate">{item.name}</span>
+                                {item.id === currentUserId && (
+                                  <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                                    Logged in
+                                  </Badge>
+                                )}
+                              </div>
+                              {item.email && <div className="text-xs text-muted-foreground">{item.email}</div>}
+                              <div className="text-xs text-muted-foreground">
+                                {formatLastLogin(item.last_login, item.id === currentUserId)}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="font-medium">{item.name}</div>
+                            {item.email && <div className="text-xs text-muted-foreground">{item.email}</div>}
+                          </>
+                        )}
                       </TableCell>
                       {tab === "users" && (
                         <>
                           <TableCell>{item.role || "N/A"}</TableCell>
+                          <TableCell>{item.department || "N/A"}</TableCell>
+                          <TableCell>
+                            <Badge variant="secondary">{Array.isArray(item.permissions) ? item.permissions.length : 0} assigned</Badge>
+                          </TableCell>
                           <TableCell><Badge>{item.status}</Badge></TableCell>
                         </>
+                      )}
+                      {tab === "roles" && (
+                        <TableCell>
+                          <Badge variant="secondary">{usersByRole.get(item.id) || 0} users</Badge>
+                        </TableCell>
+                      )}
+                      {tab === "departments" && (
+                        <TableCell>
+                          <Badge variant="secondary">{usersByDepartment.get(item.id) || 0} users</Badge>
+                        </TableCell>
+                      )}
+                      {tab === "permissions" && (
+                        <TableCell>
+                          <Badge variant="secondary">{usersByPermission.get(item.name) || 0} users</Badge>
+                        </TableCell>
                       )}
                       <TableCell className="text-right">
                         <Button variant="ghost" size="icon" onClick={() => handleOpenModal(item)}><Edit className="h-4 w-4" /></Button>

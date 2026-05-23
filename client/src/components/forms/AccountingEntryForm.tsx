@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import AccountingBooksService, { AccountingAccount } from "@/services/accountingBooksService";
-import TransactionEngine from "@/services/transactionEngine";
 
 interface AccountingEntryFormProps {
   open: boolean;
@@ -107,33 +106,6 @@ export function AccountingEntryForm({ open, onClose, onSuccess }: AccountingEntr
         reference_no: formData.referenceNo || undefined,
         receipt: formData.receipt,
       });
-
-      const primaryAccount = accounts.find((account) => String(account.id) === formData.accountId);
-      const offsetAccount = accounts.find((account) => String(account.id) === formData.offsetAccountId);
-
-      if (primaryAccount && offsetAccount) {
-        TransactionEngine.postTransaction({
-          date: formData.date,
-          reference: formData.referenceNo || response.reference || `JE-${response.journalId}`,
-          description: formData.description,
-          source_id: String(response.journalId),
-          source_type: "manual",
-          entries: [
-            {
-              account_code: primaryAccount.code,
-              account_name: primaryAccount.name,
-              debit,
-              credit,
-            },
-            {
-              account_code: offsetAccount.code,
-              account_name: offsetAccount.name,
-              debit: credit,
-              credit: debit,
-            },
-          ],
-        });
-      }
 
       toast({
         title: "Entry Posted",

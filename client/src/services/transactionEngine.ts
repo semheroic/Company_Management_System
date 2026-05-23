@@ -41,16 +41,17 @@ export const CHART_OF_ACCOUNTS = {
   
   // Liabilities
   '2001': 'Accounts Payable',
-  '2004': 'Loans Payable',
   '2101': 'VAT Payable',
   '2102': 'PAYE Payable',
   '2103': 'RSSB Payable',
-  '2201': 'Dividend Payable',  // ADDED - was missing
-  '2202': 'Accrued Expenses',
+  '2104': 'Dividend Payable',
+  '2201': 'Accrued Expenses',
   
   // Equity
-  '3001': 'Share Capital',
-  '3002': 'Retained Earnings',
+  '3000': 'Share Capital',
+  '3001': 'Retained Earnings',
+  '3002': 'Owner Drawings',
+  '3003': 'Equity Adjustment',
   
   // Revenue
   '4001': 'Sales Revenue',
@@ -58,13 +59,13 @@ export const CHART_OF_ACCOUNTS = {
   '4003': 'Other Income',
   
   // Expenses
-  '5001': 'Salaries & Wages',
-  '5002': 'Rent Expense',
-  '5003': 'Utilities',
-  '5004': 'Marketing',
+  '5001': 'General Expenses',
+  '5002': 'Salaries & Wages',
+  '5003': 'Rent Expense',
+  '5004': 'Utilities Expense',
   '5005': 'Office Supplies',
   '5006': 'Professional Fees',
-  '5007': 'Depreciation',
+  '5007': 'Depreciation Expense',
   '5008': 'Other Expenses'
 };
 
@@ -257,7 +258,7 @@ export const TransactionHelpers = {
       source_id: id,
       source_type: 'payroll',
       entries: [
-        { account_code: '5001', account_name: 'Salaries & Wages', debit: grossSalary + rssbEmployer },
+        { account_code: '5002', account_name: 'Salaries & Wages', debit: grossSalary + rssbEmployer },
         { account_code: '1001', account_name: 'Cash at Bank', credit: netPay },
         { account_code: '2102', account_name: 'PAYE Payable', credit: payeTax },
         { account_code: '2103', account_name: 'RSSB Payable', credit: rssbEmployee + rssbEmployer }

@@ -1,82 +1,154 @@
-
-import { useState } from "react";
-import { ArrowLeft, FileText, Download, Calendar } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { ArrowLeft, Calendar, Download, FileText, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
-import { Link } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import AccountingService from "@/services/accountingService";
+import AccountingBooksService, { TrialBalanceEntry } from "@/services/accountingBooksService";
 
 export default function TrialBalance() {
   const { toast } = useToast();
-  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().split('T')[0]);
-  
-  // Get trial balance from accounting system
-  const trialBalance = AccountingService.getTrialBalance(asOfDate);
-  const financialSummary = AccountingService.getFinancialSummary();
-  
-  const totalDebits = trialBalance.reduce((sum, acc) => sum + acc.debit, 0);
-  const totalCredits = trialBalance.reduce((sum, acc) => sum + acc.credit, 0);
+  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().split("T")[0]);
+  const [trialBalance, setTrialBalance] = useState<TrialBalanceEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    void loadTrialBalance(asOfDate);
+  }, [asOfDate]);
+
+  const loadTrialBalance = async (targetDate: string) => {
+    setIsLoading(true);
+    try {
+      const response = await AccountingBooksService.getTrialBalance(undefined, targetDate);
+      setTrialBalance(response || []);
+    } catch (error: any) {
+      console.error("Failed to load trial balance:", error);
+      toast({
+        title: "Load Failed",
+        description: error.response?.data?.error || "Could not load trial balance from the backend.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const visibleRows = useMemo(
+    () => trialBalance.filter((account) => Number(account.total_debit || 0) > 0 || Number(account.total_credit || 0) > 0),
+    [trialBalance],
+  );
+
+  const financialSummary = useMemo(() => {
+    const assets = visibleRows
+      .filter((entry) => String(entry.code).startsWith("1"))
+      .reduce((sum, entry) => sum + Number(entry.net_balance || 0), 0);
+
+    const liabilities = visibleRows
+      .filter((entry) => String(entry.code).startsWith("2"))
+      .reduce((sum, entry) => sum + Math.abs(Number(entry.net_balance || 0)), 0);
+
+    const equity = visibleRows
+      .filter((entry) => String(entry.code).startsWith("3"))
+      .reduce((sum, entry) => sum + Math.abs(Number(entry.net_balance || 0)), 0);
+
+    const revenue = visibleRows
+      .filter((entry) => String(entry.code).startsWith("4"))
+      .reduce((sum, entry) => sum + Number(entry.total_credit || 0), 0);
+
+    const expenses = visibleRows
+      .filter((entry) => String(entry.code).startsWith("5"))
+      .reduce((sum, entry) => sum + Number(entry.total_debit || 0), 0);
+
+    return {
+      assets,
+      liabilities,
+      equity,
+      profit: revenue - expenses,
+    };
+  }, [visibleRows]);
+
+  const totalDebits = visibleRows.reduce((sum, account) => sum + Number(account.total_debit || 0), 0);
+  const totalCredits = visibleRows.reduce((sum, account) => sum + Number(account.total_credit || 0), 0);
   const isBalanced = Math.abs(totalDebits - totalCredits) < 0.01;
 
-  const handleExport = (format: string) => {
-    toast({
-      title: "Export Started",
-      description: `Downloading trial balance in ${format} format...`,
-    });
+  const handleExport = () => {
+    const csvContent = [
+      "Account Code,Account Name,Debit,Credit,Balance",
+      ...visibleRows.map((account) =>
+        [
+          account.code,
+          `"${account.name}"`,
+          Number(account.total_debit || 0).toFixed(2),
+          Number(account.total_credit || 0).toFixed(2),
+          Number(account.net_balance || 0).toFixed(2),
+        ].join(","),
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `trial-balance-${asOfDate}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-RW', {
-      style: 'currency',
-      currency: 'RWF',
-      minimumFractionDigits: 0
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat("en-RW", {
+      style: "currency",
+      currency: "RWF",
+      minimumFractionDigits: 0,
     }).format(amount);
-  };
 
   const getAccountTypeColor = (accountCode: string) => {
-    if (accountCode.startsWith('1')) return 'text-blue-700'; // Assets
-    if (accountCode.startsWith('2')) return 'text-red-700';  // Liabilities
-    if (accountCode.startsWith('3')) return 'text-purple-700'; // Equity
-    if (accountCode.startsWith('4')) return 'text-green-700'; // Revenue
-    if (accountCode.startsWith('5')) return 'text-orange-700'; // Expenses
-    return 'text-gray-700';
+    if (accountCode.startsWith("1")) return "text-blue-700";
+    if (accountCode.startsWith("2")) return "text-red-700";
+    if (accountCode.startsWith("3")) return "text-purple-700";
+    if (accountCode.startsWith("4")) return "text-green-700";
+    if (accountCode.startsWith("5")) return "text-orange-700";
+    return "text-gray-700";
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+          <p className="text-sm text-gray-600">Loading trial balance...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link to="/">
               <Button variant="ghost" size="sm">
-                <ArrowLeft className="w-4 h-4 mr-2" />
+                <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to Dashboard
               </Button>
             </Link>
             <h1 className="text-2xl font-semibold">Trial Balance</h1>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => handleExport("Excel")}>
-              <Download className="w-4 h-4 mr-2" />
-              Export Excel
-            </Button>
-            <Button variant="outline" onClick={() => handleExport("PDF")}>
-              <Download className="w-4 h-4 mr-2" />
-              Export PDF
-            </Button>
-          </div>
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
         </div>
 
-        {/* Date Filter */}
         <Card className="mb-6">
           <CardContent className="p-4">
             <div className="flex items-center gap-4">
-              <Calendar className="w-5 h-5 text-gray-600" />
-              <label htmlFor="asOfDate" className="font-medium">As of Date:</label>
+              <Calendar className="h-5 w-5 text-gray-600" />
+              <label htmlFor="asOfDate" className="font-medium">
+                As of Date:
+              </label>
               <Input
                 id="asOfDate"
                 type="date"
@@ -84,56 +156,48 @@ export default function TrialBalance() {
                 onChange={(e) => setAsOfDate(e.target.value)}
                 className="w-48"
               />
-              <div className={`ml-4 px-3 py-1 rounded-full text-sm font-medium ${
-                isBalanced ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-              }`}>
-                {isBalanced ? '✓ Balanced' : '⚠ Out of Balance'}
+              <div
+                className={`ml-4 rounded-full px-3 py-1 text-sm font-medium ${
+                  isBalanced ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+                }`}
+              >
+                {isBalanced ? "Balanced" : "Out of Balance"}
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardContent className="p-6">
-              <div className="text-2xl font-bold text-blue-600">
-                {formatCurrency(financialSummary.assets)}
-              </div>
+              <div className="text-2xl font-bold text-blue-600">{formatCurrency(financialSummary.assets)}</div>
               <div className="text-sm text-gray-600">Total Assets</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-6">
-              <div className="text-2xl font-bold text-red-600">
-                {formatCurrency(financialSummary.liabilities)}
-              </div>
+              <div className="text-2xl font-bold text-red-600">{formatCurrency(financialSummary.liabilities)}</div>
               <div className="text-sm text-gray-600">Total Liabilities</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-6">
-              <div className="text-2xl font-bold text-purple-600">
-                {formatCurrency(financialSummary.equity)}
-              </div>
+              <div className="text-2xl font-bold text-purple-600">{formatCurrency(financialSummary.equity)}</div>
               <div className="text-sm text-gray-600">Total Equity</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-6">
-              <div className="text-2xl font-bold text-green-600">
-                {formatCurrency(financialSummary.profit)}
-              </div>
+              <div className="text-2xl font-bold text-green-600">{formatCurrency(financialSummary.profit)}</div>
               <div className="text-sm text-gray-600">Net Profit</div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Trial Balance Table */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <FileText className="w-5 h-5" />
+              <FileText className="h-5 w-5" />
               Trial Balance as of {asOfDate}
             </CardTitle>
           </CardHeader>
@@ -149,45 +213,46 @@ export default function TrialBalance() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {trialBalance.map((account) => (
-                  account.debit > 0 || account.credit > 0 ? (
-                    <TableRow key={account.account_code}>
-                      <TableCell className={`font-mono font-medium ${getAccountTypeColor(account.account_code)}`}>
-                        {account.account_code}
+                {visibleRows.map((account) => {
+                  const debit = Number(account.total_debit || 0);
+                  const credit = Number(account.total_credit || 0);
+                  const balance = Number(account.net_balance || 0);
+
+                  return (
+                    <TableRow key={account.code}>
+                      <TableCell className={`font-mono font-medium ${getAccountTypeColor(account.code)}`}>
+                        {account.code}
                       </TableCell>
-                      <TableCell className="font-medium">{account.account_name}</TableCell>
-                      <TableCell className="text-right">
-                        {account.debit > 0 ? formatCurrency(account.debit) : "-"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {account.credit > 0 ? formatCurrency(account.credit) : "-"}
-                      </TableCell>
-                      <TableCell className={`text-right font-medium ${
-                        account.balance > 0 ? 'text-blue-600' : account.balance < 0 ? 'text-red-600' : ''
-                      }`}>
-                        {account.balance !== 0 ? formatCurrency(Math.abs(account.balance)) : "-"}
-                        {account.balance < 0 ? ' (CR)' : ''}
+                      <TableCell className="font-medium">{account.name}</TableCell>
+                      <TableCell className="text-right">{debit > 0 ? formatCurrency(debit) : "-"}</TableCell>
+                      <TableCell className="text-right">{credit > 0 ? formatCurrency(credit) : "-"}</TableCell>
+                      <TableCell
+                        className={`text-right font-medium ${
+                          balance > 0 ? "text-blue-600" : balance < 0 ? "text-red-600" : ""
+                        }`}
+                      >
+                        {balance !== 0 ? formatCurrency(Math.abs(balance)) : "-"}
+                        {balance < 0 ? " (CR)" : ""}
                       </TableCell>
                     </TableRow>
-                  ) : null
-                ))}
-                
-                {/* Totals Row */}
-                <TableRow className="border-t-2 font-bold bg-gray-50">
-                  <TableCell colSpan={2} className="text-right">TOTALS</TableCell>
+                  );
+                })}
+
+                <TableRow className="border-t-2 bg-gray-50 font-bold">
+                  <TableCell colSpan={2} className="text-right">
+                    TOTALS
+                  </TableCell>
                   <TableCell className="text-right">{formatCurrency(totalDebits)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(totalCredits)}</TableCell>
                   <TableCell className="text-right">
-                    {isBalanced ? '✓ Balanced' : `Difference: ${formatCurrency(Math.abs(totalDebits - totalCredits))}`}
+                    {isBalanced ? "Balanced" : `Difference: ${formatCurrency(Math.abs(totalDebits - totalCredits))}`}
                   </TableCell>
                 </TableRow>
               </TableBody>
             </Table>
-            
-            {trialBalance.length === 0 && (
-              <div className="text-center py-8 text-gray-500">
-                No account balances found for the selected date
-              </div>
+
+            {visibleRows.length === 0 && (
+              <div className="py-8 text-center text-gray-500">No account balances found for the selected date.</div>
             )}
           </CardContent>
         </Card>

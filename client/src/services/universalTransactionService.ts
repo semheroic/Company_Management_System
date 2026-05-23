@@ -48,7 +48,10 @@ class UniversalTransactionService {
     }
   }
 
-  static createTransaction(data: Omit<UniversalTransaction, 'id' | 'created_at'> & { company_id?: string }): UniversalTransaction {
+  static createTransaction(
+    data: Omit<UniversalTransaction, 'id' | 'created_at'> & { company_id?: string },
+    options?: { skipAccountingPost?: boolean },
+  ): UniversalTransaction {
     this.loadTransactions();
     const currentCompanyId = data.company_id || localStorage.getItem('selectedCompanyId') || '';
     
@@ -61,8 +64,9 @@ class UniversalTransactionService {
 
     this.transactions.push(transaction);
     
-    // Auto-post to accounting system
-    this.postToAccounting(transaction);
+    if (!options?.skipAccountingPost) {
+      this.postToAccounting(transaction);
+    }
     
     // Store in localStorage for persistence
     localStorage.setItem('universal-transactions', JSON.stringify(this.transactions));
@@ -173,7 +177,7 @@ class UniversalTransactionService {
               source_id: transaction.id,
               source_type: 'payroll',
               entries: [
-                { account_code: '5001', account_name: 'Salaries & Wages', debit: transaction.gross_salary + (transaction.rssb_employer || 0) },
+                { account_code: '5002', account_name: 'Salaries & Wages', debit: transaction.gross_salary + (transaction.rssb_employer || 0) },
                 { account_code: '1001', account_name: 'Cash at Bank', credit: transaction.net_salary },
                 { account_code: '2102', account_name: 'PAYE Payable', credit: transaction.paye_deduction || 0 },
                 { account_code: '2103', account_name: 'RSSB Payable', credit: (transaction.rssb_employee || 0) + (transaction.rssb_employer || 0) }

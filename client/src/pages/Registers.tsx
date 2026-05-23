@@ -53,7 +53,7 @@ const formatDate = (value?: string | null) => {
 
 const mapShareRecord = (record: any): ShareRecord => ({
   id: Number(record.id),
-  certificateNo: record.certificate_no || record.certificateNo || "",
+  certificateNo: record.certificate_no || record.certificate_number || record.certificateNo || "",
   holder: record.holder_name || record.holder || record.full_name || "",
   shares: Number(record.shares_count ?? record.shares ?? 0),
   date: formatDate(record.issue_date || record.date),

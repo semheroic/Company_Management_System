@@ -1,86 +1,139 @@
+import { useEffect, useState } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle,
+  FileText,
+  Loader2,
+  RefreshCw,
+  Shield,
+  Users,
+  Database,
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import SystemHealthService, {
+  SystemHealthActivity,
+  SystemHealthRecommendation,
+  SystemHealthResponse,
+} from "@/services/systemHealthService";
 
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Button } from '@/components/ui/button';
-import { 
-  Activity, 
-  Database, 
-  Shield, 
-  Users, 
-  FileText, 
-  AlertTriangle, 
-  CheckCircle, 
-  Clock,
-  TrendingUp
-} from 'lucide-react';
-import AuditLogService from '@/services/auditLogService';
-import TransactionEngine from '@/services/transactionEngine';
-
-interface SystemMetrics {
-  totalTransactions: number;
-  activeUsers: number;
-  systemUptime: number;
-  dataIntegrity: number;
-  complianceScore: number;
-  auditTrailHealth: number;
-}
-
-export default function SystemHealthDashboard() {
-  const [metrics, setMetrics] = useState<SystemMetrics>({
+const defaultData: SystemHealthResponse = {
+  overview: {
     totalTransactions: 0,
     activeUsers: 0,
-    systemUptime: 99.9,
-    dataIntegrity: 100,
-    complianceScore: 87.5,
-    auditTrailHealth: 95.2
-  });
+    activeAlerts: 0,
+    pendingReturns: 0,
+  },
+  health: {
+    ledgerBalanceScore: 0,
+    complianceScore: 0,
+    userCoverageScore: 0,
+    documentationCoverageScore: 0,
+  },
+  recentActivity: [],
+  recommendations: [],
+};
 
-  const [auditSummary, setAuditSummary] = useState<any>({});
-  const [recentActivity, setRecentActivity] = useState<any[]>([]);
+export default function SystemHealthDashboard() {
+  const { toast } = useToast();
+  const [data, setData] = useState<SystemHealthResponse>(defaultData);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
-    loadSystemMetrics();
+    void loadDashboard();
   }, []);
 
-  const loadSystemMetrics = () => {
-    // Get audit summary
-    const summary = AuditLogService.getActivitySummary();
-    setAuditSummary(summary);
+  const loadDashboard = async (showToast = false) => {
+    const updateLoadingState = isLoading ? setIsLoading : setIsRefreshing;
+    updateLoadingState(true);
 
-    // Get recent activity
-    const activity = AuditLogService.getRecentActivity(5);
-    setRecentActivity(activity);
+    try {
+      const response = await SystemHealthService.getDashboard();
+      setData(response);
 
-    // Calculate system metrics
-    const generalLedger = TransactionEngine.getGeneralLedger();
-    setMetrics(prev => ({
-      ...prev,
-      totalTransactions: generalLedger.length,
-      activeUsers: summary.activeUsers.length
-    }));
+      if (showToast) {
+        toast({
+          title: "System Health Updated",
+          description: "Latest backend metrics have been loaded.",
+        });
+      }
+    } catch (error: any) {
+      console.error("Failed to load system health dashboard:", error);
+      toast({
+        title: "Load Failed",
+        description: error.response?.data?.error || "Could not load system health metrics from the backend.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   };
 
-  const getHealthStatus = (score: number) => {
-    if (score >= 95) return { status: 'excellent', color: 'text-green-600', bg: 'bg-green-100' };
-    if (score >= 85) return { status: 'good', color: 'text-blue-600', bg: 'bg-blue-100' };
-    if (score >= 70) return { status: 'fair', color: 'text-yellow-600', bg: 'bg-yellow-100' };
-    return { status: 'poor', color: 'text-red-600', bg: 'bg-red-100' };
+  const getScoreTone = (score: number) => {
+    if (score >= 95) return "text-green-600";
+    if (score >= 80) return "text-blue-600";
+    if (score >= 65) return "text-yellow-600";
+    return "text-red-600";
   };
+
+  const getRecommendationTone = (severity: SystemHealthRecommendation["severity"]) => {
+    switch (severity) {
+      case "critical":
+        return "border-red-200 bg-red-50 text-red-900";
+      case "warning":
+        return "border-yellow-200 bg-yellow-50 text-yellow-900";
+      case "info":
+        return "border-blue-200 bg-blue-50 text-blue-900";
+      case "success":
+      default:
+        return "border-green-200 bg-green-50 text-green-900";
+    }
+  };
+
+  const getActivityIcon = (activity: SystemHealthActivity) => {
+    if (activity.category === "alert") {
+      return <AlertTriangle className="h-4 w-4 text-yellow-600" />;
+    }
+
+    if (activity.category === "tax") {
+      return <Shield className="h-4 w-4 text-blue-600" />;
+    }
+
+    if (activity.category === "invoice" || activity.category === "receipt") {
+      return <FileText className="h-4 w-4 text-green-600" />;
+    }
+
+    return <Activity className="h-4 w-4 text-slate-600" />;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[320px] items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <span>Loading system health...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* System Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">{metrics.totalTransactions}</div>
-                <div className="text-sm text-gray-600">Total Transactions</div>
+                <div className="text-2xl font-bold">{data.overview.totalTransactions}</div>
+                <div className="text-sm text-gray-600">Journal Transactions</div>
               </div>
-              <Database className="w-8 h-8 text-blue-600" />
+              <Database className="h-8 w-8 text-blue-600" />
             </div>
           </CardContent>
         </Card>
@@ -89,10 +142,10 @@ export default function SystemHealthDashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">{metrics.activeUsers}</div>
+                <div className="text-2xl font-bold">{data.overview.activeUsers}</div>
                 <div className="text-sm text-gray-600">Active Users</div>
               </div>
-              <Users className="w-8 h-8 text-green-600" />
+              <Users className="h-8 w-8 text-green-600" />
             </div>
           </CardContent>
         </Card>
@@ -101,10 +154,10 @@ export default function SystemHealthDashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">{auditSummary.totalActions || 0}</div>
-                <div className="text-sm text-gray-600">Audit Entries</div>
+                <div className="text-2xl font-bold">{data.overview.activeAlerts}</div>
+                <div className="text-sm text-gray-600">Active Alerts</div>
               </div>
-              <Shield className="w-8 h-8 text-purple-600" />
+              <AlertTriangle className="h-8 w-8 text-yellow-600" />
             </div>
           </CardContent>
         </Card>
@@ -113,55 +166,68 @@ export default function SystemHealthDashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">{metrics.systemUptime}%</div>
-                <div className="text-sm text-gray-600">System Uptime</div>
+                <div className="text-2xl font-bold">{data.overview.pendingReturns}</div>
+                <div className="text-sm text-gray-600">Pending Tax Returns</div>
               </div>
-              <Activity className="w-8 h-8 text-orange-600" />
+              <Shield className="h-8 w-8 text-indigo-600" />
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Health Metrics */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="w-5 h-5" />
-              System Health Metrics
-            </CardTitle>
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5" />
+                Backend Health Scores
+              </CardTitle>
+              <Button variant="outline" size="sm" onClick={() => void loadDashboard(true)} disabled={isRefreshing}>
+                {isRefreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                Refresh
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">Data Integrity</span>
-                <span className="text-sm font-semibold">{metrics.dataIntegrity}%</span>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Ledger Balance</span>
+                <span className={`text-sm font-semibold ${getScoreTone(data.health.ledgerBalanceScore)}`}>
+                  {data.health.ledgerBalanceScore}%
+                </span>
               </div>
-              <Progress value={metrics.dataIntegrity} className="h-2" />
+              <Progress value={data.health.ledgerBalanceScore} className="h-2" />
             </div>
 
             <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">Compliance Score</span>
-                <span className="text-sm font-semibold">{metrics.complianceScore}%</span>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Compliance</span>
+                <span className={`text-sm font-semibold ${getScoreTone(data.health.complianceScore)}`}>
+                  {data.health.complianceScore}%
+                </span>
               </div>
-              <Progress value={metrics.complianceScore} className="h-2" />
+              <Progress value={data.health.complianceScore} className="h-2" />
             </div>
 
             <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">Audit Trail Health</span>
-                <span className="text-sm font-semibold">{metrics.auditTrailHealth}%</span>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Active User Coverage</span>
+                <span className={`text-sm font-semibold ${getScoreTone(data.health.userCoverageScore)}`}>
+                  {data.health.userCoverageScore}%
+                </span>
               </div>
-              <Progress value={metrics.auditTrailHealth} className="h-2" />
+              <Progress value={data.health.userCoverageScore} className="h-2" />
             </div>
 
             <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">System Uptime</span>
-                <span className="text-sm font-semibold">{metrics.systemUptime}%</span>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Document Coverage</span>
+                <span className={`text-sm font-semibold ${getScoreTone(data.health.documentationCoverageScore)}`}>
+                  {data.health.documentationCoverageScore}%
+                </span>
               </div>
-              <Progress value={metrics.systemUptime} className="h-2" />
+              <Progress value={data.health.documentationCoverageScore} className="h-2" />
             </div>
           </CardContent>
         </Card>
@@ -169,36 +235,29 @@ export default function SystemHealthDashboard() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <FileText className="w-5 h-5" />
-              Recent System Activity
+              <FileText className="h-5 w-5" />
+              Recent Backend Activity
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {recentActivity.length === 0 ? (
-                <p className="text-center text-gray-500 py-4">No recent activity</p>
+              {data.recentActivity.length === 0 ? (
+                <p className="py-4 text-center text-gray-500">No recent backend activity found.</p>
               ) : (
-                recentActivity.map((activity) => (
-                  <div key={activity.id} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-1 rounded-full ${
-                        activity.action_type === 'create' ? 'bg-green-100' :
-                        activity.action_type === 'update' ? 'bg-blue-100' :
-                        activity.action_type === 'delete' ? 'bg-red-100' :
-                        'bg-gray-100'
-                      }`}>
-                        {activity.action_type === 'create' && <CheckCircle className="w-4 h-4 text-green-600" />}
-                        {activity.action_type === 'update' && <Clock className="w-4 h-4 text-blue-600" />}
-                        {activity.action_type === 'delete' && <AlertTriangle className="w-4 h-4 text-red-600" />}
-                        {!['create', 'update', 'delete'].includes(activity.action_type) && <Activity className="w-4 h-4 text-gray-600" />}
-                      </div>
+                data.recentActivity.map((activity) => (
+                  <div key={activity.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-full bg-slate-100 p-2">{getActivityIcon(activity)}</div>
                       <div>
-                        <div className="text-sm font-medium">{activity.description}</div>
-                        <div className="text-xs text-gray-500">{activity.user_name}</div>
+                        <div className="text-sm font-medium">{activity.title}</div>
+                        <div className="text-xs text-gray-500">{activity.subtitle}</div>
+                        <div className="mt-1 text-xs text-gray-400">
+                          {new Date(activity.occurred_at).toLocaleString()} • {activity.actor}
+                        </div>
                       </div>
                     </div>
-                    <Badge variant="outline" className="text-xs">
-                      {activity.table_name}
+                    <Badge variant="outline" className="capitalize">
+                      {activity.status}
                     </Badge>
                   </div>
                 ))
@@ -208,58 +267,24 @@ export default function SystemHealthDashboard() {
         </Card>
       </div>
 
-      {/* Action Items */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5" />
-            System Recommendations
+            <CheckCircle className="h-5 w-5" />
+            Recommendations
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {metrics.complianceScore < 90 && (
-              <div className="flex items-center justify-between p-4 border border-yellow-200 rounded-lg bg-yellow-50">
-                <div className="flex items-center gap-3">
-                  <AlertTriangle className="w-5 h-5 text-yellow-600" />
-                  <div>
-                    <div className="font-medium">Compliance Score Below Optimal</div>
-                    <div className="text-sm text-gray-600">Review compliance requirements and update documentation</div>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm">
-                  Review
-                </Button>
+            {data.recommendations.map((recommendation) => (
+              <div
+                key={recommendation.id}
+                className={`rounded-lg border p-4 ${getRecommendationTone(recommendation.severity)}`}
+              >
+                <div className="font-medium">{recommendation.title}</div>
+                <div className="mt-1 text-sm opacity-90">{recommendation.description}</div>
               </div>
-            )}
-
-            {metrics.auditTrailHealth < 95 && (
-              <div className="flex items-center justify-between p-4 border border-blue-200 rounded-lg bg-blue-50">
-                <div className="flex items-center gap-3">
-                  <Shield className="w-5 h-5 text-blue-600" />
-                  <div>
-                    <div className="font-medium">Audit Trail Needs Attention</div>
-                    <div className="text-sm text-gray-600">Some audit entries may be incomplete or missing</div>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm">
-                  Investigate
-                </Button>
-              </div>
-            )}
-
-            {auditSummary.totalActions > 0 && (
-              <div className="flex items-center justify-between p-4 border border-green-200 rounded-lg bg-green-50">
-                <div className="flex items-center gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <div>
-                    <div className="font-medium">System Operating Normally</div>
-                    <div className="text-sm text-gray-600">All systems are functioning within normal parameters</div>
-                  </div>
-                </div>
-                <Badge variant="default">Healthy</Badge>
-              </div>
-            )}
+            ))}
           </div>
         </CardContent>
       </Card>

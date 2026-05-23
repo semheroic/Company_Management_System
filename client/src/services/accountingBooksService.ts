@@ -177,11 +177,14 @@ class AccountingBooksService {
     });
   }
 
-  static async getTrialBalance(companyId?: string): Promise<TrialBalanceEntry[]> {
+  static async getTrialBalance(companyId?: string, asOfDate?: string): Promise<TrialBalanceEntry[]> {
     return this.requestWithCompanyFallback(companyId, async (targetId) => {
       const response = await axios.get(
         `${BASE_URL}/${targetId}/ledger/trial-balance`,
-        this.getHeaders(targetId),
+        {
+          ...this.getHeaders(targetId),
+          params: asOfDate ? { as_of: asOfDate } : undefined,
+        },
       );
       return response.data || [];
     });

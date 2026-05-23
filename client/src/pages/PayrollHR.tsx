@@ -41,6 +41,9 @@ const EMPTY_SUMMARY: PayrollSummary = {
   unpaidCount: 0,
 };
 
+const getErrorMessage = (error: any, fallback: string) =>
+  error?.response?.data?.error || error?.message || fallback;
+
 export default function PayrollHR() {
   const { toast } = useToast();
   const [showEmployeeForm, setShowEmployeeForm] = useState(false);
@@ -85,13 +88,13 @@ export default function PayrollHR() {
       await loadPageData();
       toast({
         title: "Payment Marked",
-        description: "Payroll record has been marked as paid.",
+        description: "Payroll record has been marked as paid and reflected in the general ledger.",
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to mark payroll record as paid:", error);
       toast({
         title: "Update Failed",
-        description: "Could not update the payroll record.",
+        description: getErrorMessage(error, "Could not update the payroll record."),
         variant: "destructive",
       });
     }
@@ -136,6 +139,17 @@ export default function PayrollHR() {
       );
     });
   }, [employees, searchTerm]);
+
+  const filteredPayrollRecords = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return payrollRecords.filter((record) => {
+      const employeeName = record.employee?.fullName?.toLowerCase() || "";
+      const position = record.employee?.position?.toLowerCase() || "";
+      const department = record.employee?.department?.toLowerCase() || "";
+
+      return query === "" || employeeName.includes(query) || position.includes(query) || department.includes(query);
+    });
+  }, [payrollRecords, searchTerm]);
 
   const activeEmployees = employees.filter((employee) => employee.status === "active").length;
   const alerts = PayrollRegisterService.getComplianceAlerts(payrollRecords, selectedMonth);
@@ -269,56 +283,84 @@ export default function PayrollHR() {
           </CardHeader>
           <CardContent>
             {payrollRecords.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Employee</TableHead>
-                    <TableHead>Position</TableHead>
-                    <TableHead className="text-right">Gross Salary</TableHead>
-                    <TableHead className="text-right">PAYE</TableHead>
-                    <TableHead className="text-right">RSSB</TableHead>
-                    <TableHead className="text-right">Net Salary</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {payrollRecords.map((record) => (
-                    <TableRow key={record.id}>
-                      <TableCell className="font-medium">
-                        <div>
-                          <div>{record.employee?.fullName || "Employee"}</div>
-                          <div className="text-sm text-gray-600">{record.employee?.email || "No email"}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>{record.employee?.position || "-"}</TableCell>
-                      <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.grossSalary)}</TableCell>
-                      <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.paye)}</TableCell>
-                      <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.rssbEmployee)}</TableCell>
-                      <TableCell className="text-right font-semibold">
-                        {PayrollRegisterService.formatCurrency(record.netSalary)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={record.paid ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>
-                          {record.paid ? "Paid" : "Unpaid"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleDownloadPayslip(record)}>
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          {!record.paid && (
-                            <Button variant="ghost" size="sm" onClick={() => void handleMarkAsPaid(record.id)}>
-                              <CheckCircle className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
+              filteredPayrollRecords.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Position</TableHead>
+                      <TableHead className="text-right">Gross Salary</TableHead>
+                      <TableHead className="text-right">PAYE</TableHead>
+                      <TableHead className="text-right">RSSB</TableHead>
+                      <TableHead className="text-right">Net Salary</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Accounting</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredPayrollRecords.map((record) => (
+                      <TableRow key={record.id}>
+                        <TableCell className="font-medium">
+                          <div>
+                            <div>{record.employee?.fullName || "Employee"}</div>
+                            <div className="text-sm text-gray-600">{record.employee?.email || "No email"}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell>{record.employee?.position || "-"}</TableCell>
+                        <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.grossSalary)}</TableCell>
+                        <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.paye)}</TableCell>
+                        <TableCell className="text-right">{PayrollRegisterService.formatCurrency(record.rssbEmployee)}</TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {PayrollRegisterService.formatCurrency(record.netSalary)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={record.paid ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>
+                            {record.paid ? "Paid" : "Unpaid"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            className={
+                              record.accountingPostedAt
+                                ? "bg-blue-100 text-blue-700"
+                                : "bg-amber-100 text-amber-700"
+                            }
+                          >
+                            {record.accountingPostedAt ? "Posted" : "Pending"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="sm" onClick={() => handleDownloadPayslip(record)}>
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            {!record.paid && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={!record.accountingPostedAt}
+                                title={
+                                  record.accountingPostedAt
+                                    ? "Mark this payroll payment as paid"
+                                    : "Post this payroll month to accounting before marking payments as paid"
+                                }
+                                onClick={() => void handleMarkAsPaid(record.id)}
+                              >
+                                <CheckCircle className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="py-8 text-center text-gray-500">
+                  No payroll records match "{searchTerm}".
+                </div>
+              )
             ) : (
               <div className="py-8 text-center">
                 <div className="mb-4 text-gray-500">No payroll data for {selectedMonth}</div>

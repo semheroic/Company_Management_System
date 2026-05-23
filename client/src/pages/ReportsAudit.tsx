@@ -17,15 +17,16 @@ import ComplianceCalendarService from "@/services/complianceCalendarService";
 import ComplianceAlertService from "@/services/complianceAlertService";
 import InternalAuditReportService from "@/services/internalAuditReportService";
 import TaxReturnRegisterService from "@/services/taxReturnRegisterService";
+import InvoiceRegisterService from "@/services/invoiceRegisterService";
 
 export default function ReportsAudit() {
   const [selectedPeriod, setSelectedPeriod] = useState("current-month");
   const [selectedRole, setSelectedRole] = useState("owner");
   const [isLoading, setIsLoading] = useState(true);
   const [dashboardData, setDashboardData] = useState({
-    totalRevenue: 45000000,
-    totalExpenses: 32000000,
-    profit: 13000000,
+    totalRevenue: 0,
+    totalExpenses: 0,
+    profit: 0,
     activeEmployees: 0,
     payrollCost: 0,
     unpaidInvoices: 0,
@@ -48,13 +49,14 @@ export default function ReportsAudit() {
     const loadReportData = async () => {
       setIsLoading(true);
       try {
-        const [employees, payroll, deadlines, alerts, audits, taxReturns] = await Promise.all([
+        const [employees, payroll, deadlines, alerts, audits, taxReturns, invoices] = await Promise.all([
           EmployeeRecordsService.getAll(),
           PayrollRegisterService.getByMonth(selectedMonth),
           ComplianceCalendarService.getAll(),
           ComplianceAlertService.getAll(),
           InternalAuditReportService.getAll(),
           TaxReturnRegisterService.getAll(),
+          InvoiceRegisterService.getAll(),
         ]);
 
         const visibleDeadlines = deadlines.records
@@ -67,16 +69,22 @@ export default function ReportsAudit() {
             department: deadline.department,
           }));
 
-        const estimatedExpenses = payroll.summary.totalGrossPay + taxReturns.summary.totalDeclared;
-        const estimatedRevenue = Math.max(45000000, estimatedExpenses + 13000000);
+        const monthInvoiceRecords = invoices.records.filter((record) => record.date.startsWith(selectedMonth));
+        const totalRevenue = monthInvoiceRecords
+          .filter((record) => record.type === "invoice")
+          .reduce((sum, record) => sum + Number(record.total || 0), 0);
+        const purchaseExpense = monthInvoiceRecords
+          .filter((record) => record.type === "receipt")
+          .reduce((sum, record) => sum + Number(record.total || 0), 0);
+        const totalExpenses = purchaseExpense + payroll.summary.totalGrossPay;
 
         setDashboardData({
-          totalRevenue: estimatedRevenue,
-          totalExpenses: estimatedExpenses,
-          profit: estimatedRevenue - estimatedExpenses,
+          totalRevenue,
+          totalExpenses,
+          profit: totalRevenue - totalExpenses,
           activeEmployees: employees.summary.activeEmployees,
           payrollCost: payroll.summary.totalGrossPay,
-          unpaidInvoices: 0,
+          unpaidInvoices: invoices.summary.outstandingInvoices,
           upcomingDeadlines: visibleDeadlines.length,
           complianceStatus:
             alerts.summary.active > 3 || deadlines.summary.overdue > 0 || audits.summary.inProgress > 3

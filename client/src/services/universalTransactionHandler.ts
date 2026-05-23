@@ -57,6 +57,8 @@ class UniversalTransactionHandler {
         reference_number: request.reference_number,
         status: 'confirmed',
         ...request.additional_data
+      }, {
+        skipAccountingPost: true,
       });
 
       transaction_id = utsTransaction.id;
@@ -213,7 +215,7 @@ class UniversalTransactionHandler {
 
           entries.push({
             account: 'Salaries & Wages',
-            account_code: '5001',
+            account_code: '5002',
             debit: grossSalary + rssbEmployer,
             description: 'Salary expense including employer contributions'
           });
@@ -362,8 +364,8 @@ class UniversalTransactionHandler {
 
     if (sharePremium > 0) {
       entries.push({
-        account: 'Share Premium',
-        account_code: '3001',
+        account: 'Equity Adjustment',
+        account_code: '3003',
         credit: sharePremium,
         description: 'Share premium on issuance'
       });
@@ -404,7 +406,7 @@ class UniversalTransactionHandler {
       // Credit sale: Dr Accounts Receivable, Cr Sales Revenue
       entries.push({
         account: 'Accounts Receivable',
-        account_code: '1201',
+        account_code: '1101',
         debit: request.amount,
         description: `Credit sale - ${clientName}`
       });
@@ -427,7 +429,7 @@ class UniversalTransactionHandler {
       });
       entries.push({
         account: 'Accounts Receivable',
-        account_code: '1201',
+        account_code: '1101',
         debit: remainingAmount,
         description: `Outstanding balance - ${clientName}`
       });
@@ -469,7 +471,7 @@ class UniversalTransactionHandler {
       });
       entries.push({
         account: 'Accounts Payable',
-        account_code: '2201',
+        account_code: '2001',
         credit: request.amount,
         description: `Amount owed to ${supplierName}`
       });
@@ -492,7 +494,7 @@ class UniversalTransactionHandler {
       });
       entries.push({
         account: 'Accounts Payable',
-        account_code: '2201',
+        account_code: '2001',
         credit: remainingAmount,
         description: `Outstanding balance to ${supplierName}`
       });
@@ -524,7 +526,7 @@ class UniversalTransactionHandler {
       'Retained Earnings': '3001',
       'Equity Adjustment': '3003',
       'Share Capital': '3000',
-      'Share Premium': '3001',
+      'Share Premium': '3003',
       'Owner Drawings': '3002'
     };
     return accountCodes[accountName] || '3999';
@@ -559,10 +561,10 @@ class UniversalTransactionHandler {
       'KCB Bank': '1001',
       'Equity Bank': '1001',
       'MoMo Wallet': '1003',
-      'Airtel Money': '1004',
+      'Airtel Money': '1003',
       'Mobile Money': '1003'
     };
-    return transferAccountCodes[accountName] || '1000';
+    return transferAccountCodes[accountName] || '1001';
   }
 
   private static mapToTransactionEngineType(transactionType: TransactionRequest['type']): 'invoice' | 'purchase' | 'payroll' | 'asset' | 'payment' | 'manual' {
