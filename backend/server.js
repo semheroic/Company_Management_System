@@ -1,11 +1,8 @@
 ﻿// ── TOP OF FILE ── replace the entire chained require block with this:
 
-const dotenv = require('dotenv');
-if (process.env.NODE_ENV !== 'production') {
-    dotenv.config({ path: require('path').join(__dirname, '.env') });
+ if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config();
 }
-const isProduction = process.env.NODE_ENV === 'production';
-
 const express = require('express'),
     mysql = require('mysql2'),
     bcrypt = require('bcrypt'),
@@ -67,7 +64,7 @@ const asyncHandler = fn => (req, res, next) => {
 // --- 2. DATABASE CONNECTION ---
 
 
-
+const isProduction = process.env.NODE_ENV === 'production';
 console.log("ENV:", process.env.NODE_ENV);
 console.log("DB MODE:", isProduction ? "Production" : "Local");
 
@@ -117,15 +114,7 @@ const sessionStore = new MySQLStore({
 
 // ================= DB CONNECTION TEST =================
 
-db.getConnection()
-    .then((conn) => {
-        console.log("✅ DB Connected Successfully");
-        conn.release();
-    })
-    .catch((err) => {
-        console.error("❌ DB Connection Error:", err.message);
-        process.exit(1);
-    });
+
 const sessionCookieConfig = {
     httpOnly: true,
     secure: isProduction,
