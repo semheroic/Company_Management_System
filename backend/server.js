@@ -66,26 +66,66 @@ const asyncHandler = fn => (req, res, next) => {
 
 // --- 2. DATABASE CONNECTION ---
 
-const db = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'office_manager_db',
+
+
+console.log("ENV:", process.env.NODE_ENV);
+console.log("DB MODE:", isProduction ? "Production" : "Local");
+
+// ================= DATABASE =================
+
+const dbConfig = {
+    host: isProduction
+        ? process.env.MYSQLHOST || process.env.DB_HOST
+        : process.env.DB_HOST || "localhost",
+
+    port: isProduction
+        ? Number(process.env.MYSQLPORT || process.env.DB_PORT)
+        : Number(process.env.DB_PORT) || 3306,
+
+    user: isProduction
+        ? process.env.MYSQLUSER || process.env.DB_USER
+        : process.env.DB_USER || "root",
+
+    password: isProduction
+        ? process.env.MYSQLPASSWORD || process.env.DB_PASSWORD
+        : process.env.DB_PASSWORD || "",
+
+    database: isProduction
+        ? process.env.MYSQLDATABASE || process.env.DB_NAME
+        : process.env.DB_NAME || "office_manager_db",
+
     waitForConnections: true,
-    connectionLimit: 10
-}).promise();
+    connectionLimit: 10,
+    queueLimit: 0,
+    connectTimeout: 60000
+};
+
+// ================= MYSQL POOL =================
+
+const db = mysql.createPool(dbConfig).promise();
+
+// ================= SESSION STORE =================
+
 const sessionStore = new MySQLStore({
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'office_manager_db',
+    ...dbConfig,
+
     clearExpired: true,
     checkExpirationInterval: 15 * 60 * 1000,
     expiration: SESSION_TTL_MS,
     createDatabaseTable: true
 });
+
+// ================= DB CONNECTION TEST =================
+
+db.getConnection()
+    .then((conn) => {
+        console.log("✅ DB Connected Successfully");
+        conn.release();
+    })
+    .catch((err) => {
+        console.error("❌ DB Connection Error:", err.message);
+        process.exit(1);
+    });
 const sessionCookieConfig = {
     httpOnly: true,
     secure: isProduction,
