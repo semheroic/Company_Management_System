@@ -225,7 +225,7 @@ export default function CompanySelector() {
         <DropdownMenuTrigger asChild disabled={isSwitching || deletingId !== null}>
           <Button
             variant="outline"
-            className={`min-w-0 w-full max-w-[18rem] justify-between overflow-hidden border-gray-200 bg-white/80 shadow-sm backdrop-blur-sm transition-all duration-300 sm:w-72 ${
+            className={`w-72 max-w-full justify-between overflow-hidden border-gray-200 bg-white/80 shadow-sm backdrop-blur-sm transition-all duration-300 ${
               isSwitching ? "border-blue-400 ring-2 ring-blue-50" : ""
             }`}
           >

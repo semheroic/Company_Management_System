@@ -432,6 +432,30 @@ CREATE TABLE IF NOT EXISTS `invoice` (
   KEY `fk_inv_company` (`company_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+CREATE TABLE IF NOT EXISTS `transaction_analytics` (
+  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `company_id` int(10) UNSIGNED NOT NULL,
+  `transaction_id` varchar(100) NOT NULL,
+  `source_type` varchar(50) NOT NULL,
+  `transaction_date` date NOT NULL,
+  `description` text DEFAULT NULL,
+  `party_name` varchar(255) DEFAULT NULL,
+  `amount` decimal(20,4) NOT NULL DEFAULT 0.0000,
+  `income_source` varchar(100) DEFAULT NULL,
+  `tax_category` varchar(100) DEFAULT NULL,
+  `payment_method` varchar(100) DEFAULT NULL,
+  `payment_status` varchar(50) DEFAULT NULL,
+  `status` varchar(50) NOT NULL DEFAULT 'posted',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_transaction_analytics_company_txn` (`company_id`,`transaction_id`),
+  KEY `idx_ta_company_date` (`company_id`,`transaction_date`),
+  KEY `idx_ta_company_source` (`company_id`,`source_type`),
+  KEY `idx_ta_company_status` (`company_id`,`status`),
+  CONSTRAINT `fk_ta_company` FOREIGN KEY (`company_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 CREATE TABLE IF NOT EXISTS `journal_entries` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `company_id` int(10) UNSIGNED NOT NULL,

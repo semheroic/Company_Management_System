@@ -94,6 +94,15 @@ class UniversalTransactionHandler {
       }
 
       const reference = request.reference_number || `REF-${transaction_id}`;
+      const analyticsPartyName =
+        request.party_name ||
+        String(
+          request.additional_data?.client ||
+          request.additional_data?.supplier ||
+          request.additional_data?.shareholder_name ||
+          "",
+        ) ||
+        undefined;
 
       await AccountingBooksService.syncGeneratedTransaction(
         {
@@ -102,6 +111,14 @@ class UniversalTransactionHandler {
           reference,
           source_type: request.type,
           source_id: transaction_id,
+          metadata: {
+            amount: request.amount,
+            party_name: analyticsPartyName,
+            payment_method: request.payment_method,
+            payment_status: request.payment_status,
+            income_source: String(request.additional_data?.income_source || "") || undefined,
+            tax_category: String(request.additional_data?.tax_category || "") || undefined,
+          },
           entries: accounting_entries.map((entry) => ({
             account_code: entry.account_code,
             account_name: entry.account,

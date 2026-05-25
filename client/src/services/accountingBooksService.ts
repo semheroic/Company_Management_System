@@ -51,9 +51,31 @@ export interface TrialBalanceEntry {
   net_balance: number | string;
 }
 
+export interface IncomeBreakdownEntry {
+  source: string;
+  label: string;
+  amount: number;
+  percentage: number;
+  count: number;
+}
+
+export interface IncomeBreakdownSummary {
+  totalAmount: number;
+  operatingIncome: number;
+  nonOperatingIncome: number;
+  transactionCount: number;
+  fromDate: string;
+  toDate: string;
+}
+
 interface AccountingBooksResponse {
   entries: AccountingBookEntry[];
   summary: AccountingBookSummary;
+}
+
+interface IncomeBreakdownResponse {
+  records: IncomeBreakdownEntry[];
+  summary: IncomeBreakdownSummary;
 }
 
 interface ManualEntryInput {
@@ -74,6 +96,14 @@ interface SyncedTransactionInput {
   reference: string;
   source_type: string;
   source_id?: string;
+  metadata?: {
+    amount?: number;
+    party_name?: string;
+    payment_method?: string;
+    payment_status?: string;
+    income_source?: string;
+    tax_category?: string;
+  };
   entries: Array<{
     account_code: string;
     account_name: string;
@@ -193,6 +223,22 @@ class AccountingBooksService {
         },
       );
       return response.data || [];
+    });
+  }
+
+  static async getIncomeBreakdown(fromDate: string, toDate: string, companyId?: string): Promise<IncomeBreakdownResponse> {
+    return this.requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.get(
+        `${BASE_URL}/${targetId}/accounting-books/income-breakdown`,
+        {
+          ...this.getHeaders(targetId),
+          params: {
+            from: fromDate,
+            to: toDate,
+          },
+        },
+      );
+      return response.data;
     });
   }
 

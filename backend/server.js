@@ -281,6 +281,15 @@ const inferAccountCategory = (code = '') => {
 
 const buildJournalReference = (journalId, referenceNo) => referenceNo || `JE-${String(journalId).padStart(6, '0')}`;
 const buildReversalReference = (journalId) => `REV-${String(journalId).padStart(6, '0')}`;
+const INCOME_SOURCE_LABELS = {
+    sales: 'Sales Revenue',
+    loan_creditor: 'Loan or Creditor Funds',
+    gift_friend: 'Gift or Contribution',
+    grant_donation: 'Grant or Donation',
+    asset_sale: 'Asset Sale',
+    investment_return: 'Investment Return',
+    other: 'Other Income'
+};
 
 const ensureDefaultAccounts = async (companyId, conn = db) => {
     for (const account of DEFAULT_ACCOUNTS) {
@@ -344,6 +353,77 @@ const parseJsonSafely = (value) => {
 const toNumber = (value) => Number(value || 0);
 
 const getTodayDate = () => new Date().toISOString().split('T')[0];
+const getMonthStartDate = () => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+};
+const normalizeIncomeSourceCode = (sourceType, incomeSource) => {
+    if (sourceType === 'sale') {
+        return 'sales';
+    }
+
+    const normalized = String(incomeSource || '').trim();
+    return normalized || 'other';
+};
+const formatIncomeSourceLabel = (source) =>
+    INCOME_SOURCE_LABELS[source] ||
+    String(source || 'other')
+        .split('_')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+const upsertTransactionAnalytics = async (companyId, input, conn = db) => {
+    const transactionId = String(input.transactionId || '').trim();
+    if (!transactionId) {
+        return;
+    }
+
+    const sourceType = String(input.sourceType || 'manual').trim() || 'manual';
+    const incomeSource = ['sale', 'income'].includes(sourceType)
+        ? normalizeIncomeSourceCode(sourceType, input.incomeSource)
+        : null;
+
+    await conn.query(`
+        INSERT INTO transaction_analytics (
+            company_id,
+            transaction_id,
+            source_type,
+            transaction_date,
+            description,
+            party_name,
+            amount,
+            income_source,
+            tax_category,
+            payment_method,
+            payment_status,
+            status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            source_type = VALUES(source_type),
+            transaction_date = VALUES(transaction_date),
+            description = VALUES(description),
+            party_name = VALUES(party_name),
+            amount = VALUES(amount),
+            income_source = VALUES(income_source),
+            tax_category = VALUES(tax_category),
+            payment_method = VALUES(payment_method),
+            payment_status = VALUES(payment_status),
+            status = VALUES(status),
+            updated_at = CURRENT_TIMESTAMP
+    `, [
+        companyId,
+        transactionId,
+        sourceType,
+        input.transactionDate,
+        input.description || null,
+        input.partyName || null,
+        toNumber(input.amount),
+        incomeSource,
+        input.taxCategory || null,
+        input.paymentMethod || null,
+        input.paymentStatus || null,
+        input.status || 'posted'
+    ]);
+};
 
 const resolveTaxReturnStatus = (status, dueDate, submissionDate) => {
     if (submissionDate || status === 'Filed') {
@@ -1998,7 +2078,72 @@ app.get('/api/company/:companyId/accounting-books', validateCompany, asyncHandle
     });
 }));
 
-// 3. GET Chart of Accounts for Accounting Books UI
+// 3. GET Income Breakdown for Accounting Books analytics
+app.get('/api/company/:companyId/accounting-books/income-breakdown', validateCompany, asyncHandler(async (req, res) => {
+    const fromDate = req.query.from ? String(req.query.from) : getMonthStartDate();
+    const toDate = req.query.to ? String(req.query.to) : getTodayDate();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+        throw new AppError('Dates must use YYYY-MM-DD format', 400);
+    }
+
+    if (fromDate > toDate) {
+        throw new AppError('The from date must be before the to date', 400);
+    }
+
+    const [rows] = await db.query(`
+        SELECT
+            CASE
+                WHEN source_type = 'sale' THEN 'sales'
+                WHEN income_source IS NULL OR TRIM(income_source) = '' THEN 'other'
+                ELSE income_source
+            END AS source,
+            COUNT(*) AS count,
+            COALESCE(SUM(amount), 0) AS amount
+        FROM transaction_analytics
+        WHERE company_id = ?
+          AND status <> 'cancelled'
+          AND source_type IN ('sale', 'income')
+          AND transaction_date BETWEEN ? AND ?
+        GROUP BY source
+        ORDER BY amount DESC, source ASC
+    `, [req.companyId, fromDate, toDate]);
+
+    const records = rows.map((row) => {
+        const source = String(row.source || 'other');
+        const amount = toNumber(row.amount);
+        const count = Number(row.count || 0);
+
+        return {
+            source,
+            label: formatIncomeSourceLabel(source),
+            amount,
+            percentage: 0,
+            count
+        };
+    });
+
+    const totalAmount = records.reduce((sum, item) => sum + item.amount, 0);
+    const operatingIncome = records.find((item) => item.source === 'sales')?.amount || 0;
+    const normalizedRecords = records.map((item) => ({
+        ...item,
+        percentage: totalAmount > 0 ? (item.amount / totalAmount) * 100 : 0
+    }));
+
+    res.json({
+        records: normalizedRecords,
+        summary: {
+            totalAmount,
+            operatingIncome,
+            nonOperatingIncome: totalAmount - operatingIncome,
+            transactionCount: normalizedRecords.reduce((sum, item) => sum + item.count, 0),
+            fromDate,
+            toDate
+        }
+    });
+}));
+
+// 4. GET Chart of Accounts for Accounting Books UI
 app.get('/api/company/:companyId/accounting-books/accounts', validateCompany, asyncHandler(async (req, res) => {
     await ensureDefaultAccounts(req.companyId);
     const [rows] = await db.query(
@@ -2008,7 +2153,7 @@ app.get('/api/company/:companyId/accounting-books/accounts', validateCompany, as
     res.json(rows);
 }));
 
-// 4. GET Journal Entries (History)
+// 5. GET Journal Entries (History)
 app.get('/api/company/:companyId/ledger/entries', validateCompany, asyncHandler(async (req, res) => {
     const [rows] = await db.query(`
         SELECT je.*,
@@ -2022,7 +2167,7 @@ app.get('/api/company/:companyId/ledger/entries', validateCompany, asyncHandler(
     res.json(rows);
 }));
 
-// 5. POST Manual Accounting Entry (Accounting Books form)
+// 6. POST Manual Accounting Entry (Accounting Books form)
 app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single('receipt'), validateCompany, asyncHandler(async (req, res) => {
     const conn = await db.getConnection();
     try {
@@ -2118,14 +2263,14 @@ app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single(
     }
 }));
 
-// 6. POST Synced Quick Transaction Entries (Universal Transaction form)
+// 7. POST Synced Quick Transaction Entries (Universal Transaction form)
 app.post('/api/company/:companyId/accounting-books/transactions', validateCompany, asyncHandler(async (req, res) => {
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         await ensureDefaultAccounts(req.companyId, conn);
 
-        const { date, description, reference, source_type, source_id, entries } = req.body;
+        const { date, description, reference, source_type, source_id, metadata = {}, entries } = req.body;
         if (!date || !description || !Array.isArray(entries) || entries.length < 2) {
             throw new AppError('Date, description, and at least two accounting entries are required', 400);
         }
@@ -2158,6 +2303,20 @@ app.post('/api/company/:companyId/accounting-books/transactions', validateCompan
                 credit: Number(line.credit || 0)
             });
         }
+
+        await upsertTransactionAnalytics(req.companyId, {
+            transactionId: source_id,
+            sourceType: source_type || 'manual',
+            transactionDate: date,
+            description,
+            partyName: metadata.party_name,
+            amount: metadata.amount,
+            incomeSource: metadata.income_source,
+            taxCategory: metadata.tax_category,
+            paymentMethod: metadata.payment_method,
+            paymentStatus: metadata.payment_status,
+            status: 'posted'
+        }, conn);
 
         await conn.commit();
         res.status(201).json({
@@ -2277,6 +2436,13 @@ app.post('/api/company/:companyId/accounting-books/journal/:journalId/cancel', v
                     updated_at = NOW()
                 WHERE company_id = ? AND transaction_id = ?
             `, [req.companyId, journal.source_id]);
+
+            await conn.query(`
+                UPDATE transaction_analytics
+                SET status = 'cancelled',
+                    updated_at = NOW()
+                WHERE company_id = ? AND transaction_id = ?
+            `, [req.companyId, journal.source_id]);
         }
 
         await conn.commit();
@@ -2296,7 +2462,7 @@ app.post('/api/company/:companyId/accounting-books/journal/:journalId/cancel', v
     }
 }));
 
-// 7. POST New Accounting Entry (Legacy double-entry route kept for compatibility)
+// 8. POST New Accounting Entry (Legacy double-entry route kept for compatibility)
 app.post('/api/company/:companyId/ledger/entry', upload.single('receipt'), validateCompany, asyncHandler(async (req, res) => {
     const conn = await db.getConnection();
     try {

@@ -61,10 +61,14 @@ const Index = () => {
               <div className="mx-2 hidden h-6 w-[1px] bg-gray-200 md:block" />
               <DashboardHeader />
             </div>
-            <div className="flex w-full flex-wrap items-center justify-end gap-3 lg:w-auto">
-              <NotificationCenter />
-              <CompanySelector />
-              <DashboardUserMenu />
+            <div className="flex w-full flex-col items-end gap-3 lg:w-auto">
+              <div className="flex shrink-0 justify-end">
+                <NotificationCenter />
+              </div>
+              <div className="flex min-w-0 items-center justify-end gap-3">
+                <CompanySelector />
+                <DashboardUserMenu />
+              </div>
             </div>
           </header>
           

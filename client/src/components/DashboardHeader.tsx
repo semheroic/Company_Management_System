@@ -29,8 +29,8 @@ export function DashboardHeader() {
   return (
     <div className="min-w-0 flex-1">
       <div>
-        <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Dashboard</h1>
-        <p className="max-w-2xl text-sm text-gray-600 sm:text-base">Welcome back. Here&apos;s what&apos;s happening across your company workspace.</p>
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <p className="text-gray-600">Welcome back! Here&apos;s what&apos;s happening with your business.</p>
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import UniversalTransactionHandler from "@/services/universalTransactionHandler";
 import type { TransactionRequest } from "@/services/universalTransactionHandler";
 import TaxCategoryService from "@/services/taxCategoryService";
-import { Loader2, ShieldCheck, Wallet, Workflow } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 interface UniversalTransactionFormProps {
   open: boolean;
@@ -71,7 +71,7 @@ const paymentMethodOptions = [
 ];
 
 const incomeSourceOptions = [
-  { value: "sales", label: "Core sales revenue" },
+  { value: "sales", label: "Sales revenue" },
   { value: "loan_creditor", label: "Loan or creditor funds" },
   { value: "gift_friend", label: "Gift or contribution" },
   { value: "grant_donation", label: "Grant or donation" },
@@ -296,493 +296,478 @@ export function UniversalTransactionForm({ open, onClose, onSuccess }: Universal
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-h-[94vh] max-w-5xl overflow-hidden border-0 p-0 shadow-2xl">
-        <div className="grid max-h-[94vh] lg:grid-cols-[0.95fr_1.45fr]">
-          <aside className="hidden bg-[radial-gradient(circle_at_top,#eff6ff_0%,#dbeafe_40%,#0f172a_130%)] p-8 text-slate-900 lg:flex lg:flex-col">
-            <div className="mb-6 flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/85 shadow-sm">
-                <Workflow className="h-6 w-6 text-sky-700" />
-              </div>
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Universal Transaction Entry</DialogTitle>
+          <p className="text-sm text-gray-600">
+            Single entry system that posts to the accounting books and updates the related registers.
+          </p>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <Label htmlFor="type">Transaction Type *</Label>
+              <Select value={formData.type} onValueChange={(value) => updateField("type", value)}>
+                <SelectTrigger id="type">
+                  <SelectValue placeholder="Select transaction type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transactionTypeOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="amount">Amount (RWF) *</Label>
+              <Input
+                id="amount"
+                type="number"
+                min="0"
+                step="0.01"
+                value={formData.amount}
+                onChange={(event) => updateField("amount", event.target.value)}
+                placeholder="Enter amount"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="payment_method">
+                Payment Method
+                {!requiresPaymentMethod && <span className="ml-1 text-gray-400">(Optional)</span>}
+              </Label>
+              <Select value={formData.payment_method} onValueChange={(value) => updateField("payment_method", value)}>
+                <SelectTrigger id="payment_method">
+                  <SelectValue placeholder="Select payment method" />
+                </SelectTrigger>
+                <SelectContent>
+                  {paymentMethodOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="date">Date *</Label>
+              <Input id="date" type="date" value={formData.date} onChange={(event) => updateField("date", event.target.value)} />
+            </div>
+          </div>
+
+          {showInvoiceFields && (
+            <div className="space-y-4 rounded-lg border border-purple-200 bg-purple-50 p-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-700">Unified workflow</p>
-                <h3 className="text-2xl font-semibold">Post once, update everywhere</h3>
-              </div>
-            </div>
-
-            <p className="text-sm leading-6 text-slate-700">
-              This entry creates the accounting journal first, then refreshes the connected registers and dashboard metrics for the active company workspace.
-            </p>
-
-            <div className="mt-8 grid gap-4">
-              <div className="rounded-2xl border border-white/60 bg-white/75 p-4 backdrop-blur">
-                <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <ShieldCheck className="h-4 w-4 text-sky-700" />
-                  Control checks
-                </div>
-                <p className="text-sm text-slate-600">
-                  The form validates balancing rules, company context, and related register updates before confirming success.
+                <h3 className="font-medium text-purple-900">Payment Status & Credit Handling</h3>
+                <p className="mt-1 text-sm text-purple-700">
+                  Configure whether the transaction is paid immediately, unpaid, or partially settled.
                 </p>
               </div>
-              <div className="rounded-2xl border border-white/60 bg-white/75 p-4 backdrop-blur">
-                <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <Wallet className="h-4 w-4 text-sky-700" />
-                  Live accounting preview
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                  <Label htmlFor="payment_status">Payment Status *</Label>
+                  <Select value={formData.payment_status} onValueChange={(value) => updateField("payment_status", value)}>
+                    <SelectTrigger id="payment_status">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="unpaid">Unpaid</SelectItem>
+                      <SelectItem value="partially_paid">Partially Paid</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <p className="text-sm text-slate-600">
-                  Configure payment, credit handling, and classification once so the ledger reflects the real transaction flow.
-                </p>
-              </div>
-            </div>
 
-            <div className="mt-auto rounded-3xl border border-slate-200/70 bg-slate-950 p-5 text-slate-100">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-300">Current setup</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Badge className="border-none bg-white/10 text-slate-100">Backend ledger sync</Badge>
-                <Badge className="border-none bg-white/10 text-slate-100">Register updates</Badge>
-                <Badge className="border-none bg-white/10 text-slate-100">Company aware</Badge>
-              </div>
-            </div>
-          </aside>
-
-          <div className="max-h-[94vh] overflow-y-auto bg-white">
-            <DialogHeader className="border-b border-slate-200 px-6 py-5 sm:px-8">
-              <DialogTitle className="text-2xl font-semibold text-slate-950">Quick Transaction Entry</DialogTitle>
-              <p className="mt-2 text-sm text-slate-600">
-                Create a transaction that posts to the accounting books and keeps the connected reporting views aligned.
-              </p>
-            </DialogHeader>
-
-            <form onSubmit={handleSubmit} className="space-y-6 px-6 py-6 sm:px-8">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5">
-                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                {formData.payment_status === "partially_paid" && (
                   <div>
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Transaction basics</h3>
-                    <p className="mt-1 text-sm text-slate-600">Define the business event, amount, and posting date.</p>
-                  </div>
-                  <Badge variant="outline" className="w-fit border-sky-200 bg-sky-50 text-sky-700">
-                    Active company context required
-                  </Badge>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="type">Transaction Type</Label>
-                    <Select value={formData.type} onValueChange={(value) => updateField("type", value)}>
-                      <SelectTrigger id="type">
-                        <SelectValue placeholder="Select transaction type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {transactionTypeOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="amount">Amount (RWF)</Label>
+                    <Label htmlFor="paid_amount">Amount Paid (RWF)</Label>
                     <Input
-                      id="amount"
+                      id="paid_amount"
                       type="number"
                       min="0"
                       step="0.01"
-                      value={formData.amount}
-                      onChange={(event) => updateField("amount", event.target.value)}
-                      placeholder="Enter amount"
+                      value={formData.paid_amount}
+                      onChange={(event) => updateField("paid_amount", event.target.value)}
+                      placeholder="Amount already paid"
+                    />
+                    <p className="mt-1 text-xs text-purple-700">
+                      Remaining: RWF {(Number(formData.amount || 0) - Number(formData.paid_amount || 0)).toLocaleString()}
+                    </p>
+                  </div>
+                )}
+
+                {formData.payment_status !== "paid" && (
+                  <div>
+                    <Label htmlFor="due_date">Due Date</Label>
+                    <Input id="due_date" type="date" value={formData.due_date} onChange={(event) => updateField("due_date", event.target.value)} />
+                  </div>
+                )}
+              </div>
+
+              {formData.payment_status !== "paid" && formData.amount && (
+                <div className="rounded border border-purple-200 bg-purple-100 p-3 text-xs text-purple-900">
+                  Credit transactions will post the unpaid balance to receivables or payables until settlement.
+                </div>
+              )}
+            </div>
+          )}
+
+          {isCapitalTransaction && (
+            <div className="space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <div>
+                <h3 className="font-medium text-blue-900">Capital & Equity Details</h3>
+                <p className="mt-1 text-sm text-blue-700">
+                  Capture the shareholder or equity metadata that belongs with this journal entry.
+                </p>
+              </div>
+
+              {showShareholderFields && (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="shareholder_name">Shareholder Name *</Label>
+                    <Input
+                      id="shareholder_name"
+                      value={formData.shareholder_name}
+                      onChange={(event) => updateField("shareholder_name", event.target.value)}
+                      placeholder="Enter shareholder name"
                     />
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="payment_method">
-                      Payment Method
-                      {!requiresPaymentMethod && <span className="ml-1 text-slate-400">(Optional)</span>}
-                    </Label>
-                    <Select value={formData.payment_method} onValueChange={(value) => updateField("payment_method", value)}>
-                      <SelectTrigger id="payment_method">
-                        <SelectValue placeholder="Select payment method" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {paymentMethodOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="date">Transaction Date</Label>
-                    <Input id="date" type="date" value={formData.date} onChange={(event) => updateField("date", event.target.value)} />
-                  </div>
-                </div>
-              </div>
-
-              {showInvoiceFields && (
-                <div className="rounded-2xl border border-violet-200 bg-violet-50/80 p-5">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-violet-700">Credit handling</h3>
-                    <p className="mt-1 text-sm text-violet-900/80">
-                      Configure whether the transaction is paid immediately, unpaid, or partially settled.
-                    </p>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="payment_status">Payment Status</Label>
-                      <Select value={formData.payment_status} onValueChange={(value) => updateField("payment_status", value)}>
-                        <SelectTrigger id="payment_status">
-                          <SelectValue placeholder="Select status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="paid">Paid</SelectItem>
-                          <SelectItem value="unpaid">Unpaid</SelectItem>
-                          <SelectItem value="partially_paid">Partially paid</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {formData.payment_status === "partially_paid" && (
-                      <div className="space-y-2">
-                        <Label htmlFor="paid_amount">Amount Paid</Label>
-                        <Input
-                          id="paid_amount"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={formData.paid_amount}
-                          onChange={(event) => updateField("paid_amount", event.target.value)}
-                          placeholder="Amount already paid"
-                        />
-                      </div>
-                    )}
-
-                    {formData.payment_status !== "paid" && (
-                      <div className="space-y-2">
-                        <Label htmlFor="due_date">Due Date</Label>
-                        <Input id="due_date" type="date" value={formData.due_date} onChange={(event) => updateField("due_date", event.target.value)} />
-                      </div>
-                    )}
+                  <div>
+                    <Label htmlFor="shares_allocated">Shares Allocated</Label>
+                    <Input
+                      id="shares_allocated"
+                      type="number"
+                      min="0"
+                      value={formData.shares_allocated}
+                      onChange={(event) => updateField("shares_allocated", event.target.value)}
+                      placeholder="Number of shares"
+                    />
                   </div>
                 </div>
               )}
 
-              {isCapitalTransaction && (
-                <div className="rounded-2xl border border-sky-200 bg-sky-50/80 p-5">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-sky-700">Capital and equity details</h3>
-                    <p className="mt-1 text-sm text-sky-900/80">
-                      Capture shareholder allocation and equity metadata so related capital analytics stay aligned.
-                    </p>
-                  </div>
-
-                  {showShareholderFields && (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="shareholder_name">Shareholder Name</Label>
-                        <Input
-                          id="shareholder_name"
-                          value={formData.shareholder_name}
-                          onChange={(event) => updateField("shareholder_name", event.target.value)}
-                          placeholder="Enter shareholder name"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="shares_allocated">Shares Allocated</Label>
-                        <Input
-                          id="shares_allocated"
-                          type="number"
-                          min="0"
-                          value={formData.shares_allocated}
-                          onChange={(event) => updateField("shares_allocated", event.target.value)}
-                          placeholder="Number of shares"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {formData.type === "share_issuance" && (
-                    <div className="mt-4 space-y-2">
-                      <Label htmlFor="par_value">Par Value per Share</Label>
-                      <Input
-                        id="par_value"
-                        type="number"
-                        min="0"
-                        value={formData.par_value}
-                        onChange={(event) => updateField("par_value", event.target.value)}
-                        placeholder="1000"
-                      />
-                    </div>
-                  )}
-
-                  {showEquityAdjustmentFields && (
-                    <div className="mt-4 grid gap-4 md:grid-cols-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="adjustment_type">Adjustment Type</Label>
-                        <Select value={formData.adjustment_type} onValueChange={(value) => updateField("adjustment_type", value)}>
-                          <SelectTrigger id="adjustment_type">
-                            <SelectValue placeholder="Select type" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="correction">Correction</SelectItem>
-                            <SelectItem value="revaluation">Revaluation</SelectItem>
-                            <SelectItem value="reclassification">Reclassification</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="from_account">From Account</Label>
-                        <Input
-                          id="from_account"
-                          value={formData.from_account}
-                          onChange={(event) => updateField("from_account", event.target.value)}
-                          placeholder="Retained Earnings"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="to_account">To Account</Label>
-                        <Input
-                          id="to_account"
-                          value={formData.to_account}
-                          onChange={(event) => updateField("to_account", event.target.value)}
-                          placeholder="Equity Adjustment"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {showTransferFields && (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Transfer routing</h3>
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="from_account">From Account</Label>
-                      <Input
-                        id="from_account"
-                        value={formData.from_account}
-                        onChange={(event) => updateField("from_account", event.target.value)}
-                        placeholder="Cash on Hand"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="to_account">To Account</Label>
-                      <Input
-                        id="to_account"
-                        value={formData.to_account}
-                        onChange={(event) => updateField("to_account", event.target.value)}
-                        placeholder="Cash at Bank"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {showTaxCategoryField && (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-5">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-amber-700">Tax classification</h3>
-                    <p className="mt-1 text-sm text-amber-900/80">
-                      This category feeds corporate income tax and compliance reports.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="tax_category">Tax Category</Label>
-                    <Select value={formData.tax_category} onValueChange={(value) => updateField("tax_category", value)}>
-                      <SelectTrigger id="tax_category">
-                        <SelectValue placeholder="Select tax category" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-64">
-                        {TaxCategoryService.getAllCategories().map((category) => (
-                          <SelectItem key={category.code} value={category.code}>
-                            {category.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {selectedTaxCategory && (
-                    <div className="mt-4 rounded-2xl border border-amber-200 bg-white p-4 text-sm text-slate-700">
-                      <div className="font-medium text-slate-900">{selectedTaxCategory.label}</div>
-                      <div className="mt-1 text-slate-500">{selectedTaxCategory.label_rw}</div>
-                      {selectedTaxCategory.description && <p className="mt-2 text-slate-600">{selectedTaxCategory.description}</p>}
-                      <Badge className="mt-3 border-none bg-slate-900 text-white">
-                        {selectedTaxCategory.deductible ? "Tax deductible" : "Not tax deductible"}
-                      </Badge>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {showIncomeSourceField && (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-5">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Income classification</h3>
-                    <p className="mt-1 text-sm text-emerald-900/80">Choose the source that best reflects why the funds were received.</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="income_source">Income Source</Label>
-                    <Select value={formData.income_source} onValueChange={(value) => updateField("income_source", value)}>
-                      <SelectTrigger id="income_source">
-                        <SelectValue placeholder="Select income source" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {incomeSourceOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              )}
-
-              {showMobileMoneyFields && (
-                <div className="rounded-2xl border border-sky-200 bg-sky-50/80 p-5">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-sky-700">Mobile money details</h3>
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="phone_number">Phone Number</Label>
-                      <Input
-                        id="phone_number"
-                        value={formData.phone_number}
-                        onChange={(event) => updateField("phone_number", event.target.value)}
-                        placeholder="078xxxxxxx"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="momo_reference">Transaction Reference</Label>
-                      <Input
-                        id="momo_reference"
-                        value={formData.momo_reference}
-                        onChange={(event) => updateField("momo_reference", event.target.value)}
-                        placeholder="MM-123456"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {showInvoiceFields && (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Invoice metadata</h3>
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="invoice_number">Invoice / Receipt Number</Label>
-                      <Input
-                        id="invoice_number"
-                        value={formData.invoice_number}
-                        onChange={(event) => updateField("invoice_number", event.target.value)}
-                        placeholder="Optional"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="tin">TIN Number</Label>
-                      <Input id="tin" value={formData.tin} onChange={(event) => updateField("tin", event.target.value)} placeholder="Tax identification number" />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {formData.type === "sale" && (
-                <div className="space-y-2">
-                  <Label htmlFor="client">Client Name</Label>
-                  <Input id="client" value={formData.client} onChange={(event) => updateField("client", event.target.value)} placeholder="Enter client name" />
-                </div>
-              )}
-
-              {formData.type === "purchase" && (
-                <div className="space-y-2">
-                  <Label htmlFor="supplier">Supplier Name</Label>
+              {formData.type === "share_issuance" && (
+                <div>
+                  <Label htmlFor="par_value">Par Value per Share (RWF)</Label>
                   <Input
-                    id="supplier"
-                    value={formData.supplier}
-                    onChange={(event) => updateField("supplier", event.target.value)}
-                    placeholder="Enter supplier name"
+                    id="par_value"
+                    type="number"
+                    min="0"
+                    value={formData.par_value}
+                    onChange={(event) => updateField("par_value", event.target.value)}
+                    placeholder="1000"
                   />
                 </div>
               )}
 
-              {!showInvoiceFields && !showShareholderFields && !showTransferFields && (
-                <div className="space-y-2">
-                  <Label htmlFor="party_name">Counterparty</Label>
-                  <Input
-                    id="party_name"
-                    value={formData.party_name}
-                    onChange={(event) => updateField("party_name", event.target.value)}
-                    placeholder="Optional party or payee name"
-                  />
-                </div>
-              )}
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="reference">Reference Number</Label>
-                  <Input id="reference" value={formData.reference} onChange={(event) => updateField("reference", event.target.value)} placeholder="Optional reference" />
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Journal preview</p>
-                  <div className="mt-3 space-y-1 text-sm font-mono text-slate-700">
-                    {formData.amount && formData.type ? (
-                      <>
-                        <div className="flex justify-between gap-4">
-                          <span>Estimated amount</span>
-                          <span>RWF {Number(formData.amount || 0).toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between gap-4">
-                          <span>Entry class</span>
-                          <span>{transactionTypeOptions.find((option) => option.value === formData.type)?.label || formData.type}</span>
-                        </div>
-                        {formData.payment_status !== "paid" && (
-                          <div className="flex justify-between gap-4">
-                            <span>Settlement status</span>
-                            <span>{formData.payment_status.replace("_", " ")}</span>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <p className="font-sans text-sm text-slate-500">Select a transaction type and amount to preview the posting context.</p>
-                    )}
+              {showEquityAdjustmentFields && (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div>
+                    <Label htmlFor="adjustment_type">Adjustment Type</Label>
+                    <Select value={formData.adjustment_type} onValueChange={(value) => updateField("adjustment_type", value)}>
+                      <SelectTrigger id="adjustment_type">
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="correction">Correction</SelectItem>
+                        <SelectItem value="revaluation">Revaluation</SelectItem>
+                        <SelectItem value="reclassification">Reclassification</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="from_account">From Account</Label>
+                    <Input
+                      id="from_account"
+                      value={formData.from_account}
+                      onChange={(event) => updateField("from_account", event.target.value)}
+                      placeholder="Retained Earnings"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="to_account">To Account</Label>
+                    <Input
+                      id="to_account"
+                      value={formData.to_account}
+                      onChange={(event) => updateField("to_account", event.target.value)}
+                      placeholder="Equity Adjustment"
+                    />
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {showTransferFields && (
+            <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div>
+                <h3 className="font-medium text-slate-900">Transfer Routing</h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Define the two accounts involved in the transfer.
+                </p>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
-                <Textarea
-                  id="description"
-                  value={formData.description}
-                  onChange={(event) => updateField("description", event.target.value)}
-                  placeholder="Summarize the transaction purpose"
-                  className="min-h-28"
-                />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="from_account">From Account *</Label>
+                  <Input
+                    id="from_account"
+                    value={formData.from_account}
+                    onChange={(event) => updateField("from_account", event.target.value)}
+                    placeholder="Cash on Hand"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="to_account">To Account *</Label>
+                  <Input
+                    id="to_account"
+                    value={formData.to_account}
+                    onChange={(event) => updateField("to_account", event.target.value)}
+                    placeholder="Cash at Bank"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showTaxCategoryField && (
+            <div className="space-y-4 rounded-lg border border-orange-200 bg-orange-50 p-4">
+              <div>
+                <h3 className="font-medium text-orange-900">Tax Classification</h3>
+                <p className="mt-1 text-sm text-orange-700">
+                  This category feeds corporate income tax and compliance reporting.
+                </p>
               </div>
 
-              <div className="sticky bottom-0 flex flex-col gap-3 border-t border-slate-200 bg-white/95 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-end">
-                <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isSubmitting} className="bg-slate-950 text-white hover:bg-slate-800">
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Posting transaction
-                    </>
-                  ) : (
-                    "Post Transaction"
-                  )}
-                </Button>
+              <div>
+                <Label htmlFor="tax_category">Tax Category *</Label>
+                <Select value={formData.tax_category} onValueChange={(value) => updateField("tax_category", value)}>
+                  <SelectTrigger id="tax_category">
+                    <SelectValue placeholder="Select tax classification" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60">
+                    {TaxCategoryService.getAllCategories().map((category) => (
+                      <SelectItem key={category.code} value={category.code}>
+                        {category.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {selectedTaxCategory && (
+                  <div className="mt-3 rounded border border-orange-200 bg-white p-3">
+                    <div className="font-medium text-slate-900">{selectedTaxCategory.label}</div>
+                    <div className="mt-1 text-xs text-gray-600">{selectedTaxCategory.label_rw}</div>
+                    {selectedTaxCategory.description && (
+                      <p className="mt-2 text-xs text-gray-600">{selectedTaxCategory.description}</p>
+                    )}
+                    <Badge
+                      variant={selectedTaxCategory.deductible ? "default" : "destructive"}
+                      className="mt-2 text-xs"
+                    >
+                      {selectedTaxCategory.deductible ? "Tax Deductible" : "Not Tax Deductible"}
+                    </Badge>
+                  </div>
+                )}
               </div>
-            </form>
+            </div>
+          )}
+
+          {showIncomeSourceField && (
+            <div className="space-y-4 rounded-lg border border-green-200 bg-green-50 p-4">
+              <div>
+                <h3 className="font-medium text-green-900">Income Source Classification</h3>
+                <p className="mt-1 text-sm text-green-700">
+                  Choose the source that best explains why the funds were received.
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="income_source">Source of Income *</Label>
+                <Select value={formData.income_source} onValueChange={(value) => updateField("income_source", value)}>
+                  <SelectTrigger id="income_source">
+                    <SelectValue placeholder="Select income source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {incomeSourceOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          {showMobileMoneyFields && (
+            <div className="space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <div>
+                <h3 className="font-medium text-blue-900">Mobile Money Details</h3>
+                <p className="mt-1 text-sm text-blue-700">
+                  Capture the phone number and reference used by the wallet transaction.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="phone_number">Phone Number *</Label>
+                  <Input
+                    id="phone_number"
+                    value={formData.phone_number}
+                    onChange={(event) => updateField("phone_number", event.target.value)}
+                    placeholder="078xxxxxxx"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="momo_reference">Transaction Reference *</Label>
+                  <Input
+                    id="momo_reference"
+                    value={formData.momo_reference}
+                    onChange={(event) => updateField("momo_reference", event.target.value)}
+                    placeholder="MM-123456"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showInvoiceFields && (
+            <div className="space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <h3 className="font-medium text-blue-900">Invoice / Receipt Details</h3>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="invoice_number">Invoice / Receipt Number</Label>
+                  <Input
+                    id="invoice_number"
+                    value={formData.invoice_number}
+                    onChange={(event) => updateField("invoice_number", event.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="tin">TIN Number</Label>
+                  <Input
+                    id="tin"
+                    value={formData.tin}
+                    onChange={(event) => updateField("tin", event.target.value)}
+                    placeholder="Tax identification number"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {formData.type === "sale" && (
+            <div>
+              <Label htmlFor="client">Client Name *</Label>
+              <Input
+                id="client"
+                value={formData.client}
+                onChange={(event) => updateField("client", event.target.value)}
+                placeholder="Enter client name"
+              />
+            </div>
+          )}
+
+          {formData.type === "purchase" && (
+            <div>
+              <Label htmlFor="supplier">Supplier Name *</Label>
+              <Input
+                id="supplier"
+                value={formData.supplier}
+                onChange={(event) => updateField("supplier", event.target.value)}
+                placeholder="Enter supplier name"
+              />
+            </div>
+          )}
+
+          {!showInvoiceFields && !showShareholderFields && !showTransferFields && (
+            <div>
+              <Label htmlFor="party_name">Counterparty</Label>
+              <Input
+                id="party_name"
+                value={formData.party_name}
+                onChange={(event) => updateField("party_name", event.target.value)}
+                placeholder="Optional party or payee name"
+              />
+            </div>
+          )}
+
+          <div>
+            <Label htmlFor="reference">Reference Number</Label>
+            <Input
+              id="reference"
+              value={formData.reference}
+              onChange={(event) => updateField("reference", event.target.value)}
+              placeholder="Optional reference"
+            />
           </div>
-        </div>
+
+          <div>
+            <Label htmlFor="description">Description *</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(event) => updateField("description", event.target.value)}
+              placeholder="Enter transaction description"
+            />
+          </div>
+
+          {formData.amount && formData.type && (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+              <h4 className="mb-2 font-medium text-green-900">Accounting Journal Preview</h4>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-700">Entry type</span>
+                  <span className="font-medium text-slate-900">
+                    {transactionTypeOptions.find((option) => option.value === formData.type)?.label || formData.type}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-700">Amount</span>
+                  <span className="font-medium text-slate-900">RWF {Number(formData.amount || 0).toLocaleString()}</span>
+                </div>
+                {formData.payment_status !== "paid" && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-700">Settlement status</span>
+                    <span className="font-medium capitalize text-slate-900">
+                      {formData.payment_status.replace("_", " ")}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-green-700">
+                This entry updates the accounting books first, then refreshes the related company registers.
+              </p>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing
+                </>
+              ) : (
+                "Process Transaction"
+              )}
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
