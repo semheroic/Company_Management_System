@@ -60,7 +60,7 @@ export default function SignUp() {
         department_id: departmentId ? Number(departmentId) : null,
         profile_picture: profilePicture,
       });
-      navigate("/", { replace: true });
+      navigate("/login", { replace: true });
     } catch (error: any) {
       console.error("Signup failed:", error);
       toast({
