@@ -3,10 +3,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Eye } from 'lucide-react';
-import { AuditLog } from '@/services/auditLogService';
+import { type AuditTrailEvent } from '@/services/reportService';
 
 interface AuditLogTableProps {
-  logs: AuditLog[];
+  logs: AuditTrailEvent[];
 }
 
 export default function AuditLogTable({ logs }: AuditLogTableProps) {
@@ -22,52 +22,54 @@ export default function AuditLogTable({ logs }: AuditLogTableProps) {
   };
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Date/Time</TableHead>
-          <TableHead>User</TableHead>
-          <TableHead>Action</TableHead>
-          <TableHead>Module</TableHead>
-          <TableHead>Description</TableHead>
-          <TableHead>Record ID</TableHead>
-          <TableHead>Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {logs.length === 0 ? (
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
           <TableRow>
-            <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-              No audit logs found for the selected criteria
-            </TableCell>
+            <TableHead>Date/Time</TableHead>
+            <TableHead>User</TableHead>
+            <TableHead>Action</TableHead>
+            <TableHead>Module</TableHead>
+            <TableHead>Description</TableHead>
+            <TableHead className="hidden lg:table-cell">Record ID</TableHead>
+            <TableHead className="hidden lg:table-cell">Actions</TableHead>
           </TableRow>
-        ) : (
-          logs.map((log) => (
-            <TableRow key={log.id}>
-              <TableCell>
-                <div className="text-sm">
-                  <div>{new Date(log.changed_at).toLocaleDateString()}</div>
-                  <div className="text-gray-500">{new Date(log.changed_at).toLocaleTimeString()}</div>
-                </div>
-              </TableCell>
-              <TableCell>{log.user_name}</TableCell>
-              <TableCell>
-                <Badge className={getActionBadgeColor(log.action_type)}>
-                  {log.action_type.toUpperCase()}
-                </Badge>
-              </TableCell>
-              <TableCell className="capitalize">{log.table_name.replace('_', ' ')}</TableCell>
-              <TableCell>{log.description}</TableCell>
-              <TableCell className="font-mono text-sm">{log.record_id}</TableCell>
-              <TableCell>
-                <Button variant="ghost" size="sm">
-                  <Eye className="w-4 h-4" />
-                </Button>
+        </TableHeader>
+        <TableBody>
+          {logs.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={7} className="py-8 text-center text-gray-500">
+                No audit logs found for the selected criteria
               </TableCell>
             </TableRow>
-          ))
-        )}
-      </TableBody>
-    </Table>
+          ) : (
+            logs.map((log) => (
+              <TableRow key={log.id}>
+                <TableCell className="min-w-[120px] whitespace-nowrap">
+                  <div className="text-sm">
+                    <div>{new Date(log.changed_at).toLocaleDateString()}</div>
+                    <div className="text-gray-500">{new Date(log.changed_at).toLocaleTimeString()}</div>
+                  </div>
+                </TableCell>
+                <TableCell className="whitespace-nowrap">{log.user_name}</TableCell>
+                <TableCell>
+                  <Badge className={getActionBadgeColor(log.action_type)}>
+                    {log.action_type.toUpperCase()}
+                  </Badge>
+                </TableCell>
+                <TableCell className="capitalize">{log.table_name.replace(/_/g, ' ')}</TableCell>
+                <TableCell className="min-w-[240px]">{log.description}</TableCell>
+                <TableCell className="hidden font-mono text-sm lg:table-cell">{log.record_id}</TableCell>
+                <TableCell className="hidden lg:table-cell">
+                  <Button variant="ghost" size="sm">
+                    <Eye className="w-4 h-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

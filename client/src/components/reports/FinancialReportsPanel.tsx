@@ -1,9 +1,10 @@
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { TrendingUp, DollarSign, Calendar, Building, FileText } from 'lucide-react';
+import { TrendingUp, DollarSign, Calendar, Building, FileText, type LucideIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import ReportService from '@/services/reportService';
+import ActionLoadingState from '@/components/common/ActionLoadingState';
+import ReportService, { type ReportData, type ReportGenerationOptions } from '@/services/reportService';
 import ReportControls from './financial/ReportControls';
 import ReportCard from './financial/ReportCard';
 
@@ -11,14 +12,15 @@ interface ReportCardData {
   id: string;
   title: string;
   description: string;
-  icon: any;
+  icon: LucideIcon;
   category: 'financial' | 'tax' | 'compliance' | 'operational';
-  generator: () => Promise<any>;
+  generator: (options?: ReportGenerationOptions) => Promise<ReportData>;
 }
 
 export default function FinancialReportsPanel() {
   const { toast } = useToast();
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
+  const [activeAction, setActiveAction] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState({
     from: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0]
@@ -39,7 +41,7 @@ export default function FinancialReportsPanel() {
       description: 'Complete trial balance with all accounts',
       icon: FileText,
       category: 'financial',
-      generator: ReportService.generateFinancialSummary
+      generator: ReportService.generateTrialBalanceReport
     },
     {
       id: 'payroll-report',
@@ -93,8 +95,9 @@ export default function FinancialReportsPanel() {
 
   const generateReport = async (report: ReportCardData) => {
     setIsGenerating(report.id);
+    setActiveAction(report.title);
     try {
-      const reportData = await report.generator();
+      const reportData = await report.generator({ from: dateRange.from, to: dateRange.to, asOfDate: dateRange.to });
       await ReportService.generatePDF(reportData);
       
       toast({
@@ -110,14 +113,16 @@ export default function FinancialReportsPanel() {
       });
     } finally {
       setIsGenerating(null);
+      setActiveAction(null);
     }
   };
 
   const generateAllReports = async () => {
     setIsGenerating('all');
+    setActiveAction('Full report bundle');
     try {
       for (const report of reportCards) {
-        await report.generator();
+        await report.generator({ from: dateRange.from, to: dateRange.to, asOfDate: dateRange.to });
       }
       toast({
         title: "All Reports Generated",
@@ -131,6 +136,7 @@ export default function FinancialReportsPanel() {
       });
     } finally {
       setIsGenerating(null);
+      setActiveAction(null);
     }
   };
 
@@ -142,6 +148,13 @@ export default function FinancialReportsPanel() {
         onGenerateAll={generateAllReports}
         isGenerating={isGenerating === 'all'}
       />
+
+      {activeAction ? (
+        <ActionLoadingState
+          title={isGenerating === 'all' ? 'Generating report bundle' : `Generating ${activeAction}`}
+          description="Collecting backend records and preparing report output for the selected period."
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {reportCards.map((report) => (
@@ -160,7 +173,7 @@ export default function FinancialReportsPanel() {
         </CardHeader>
         <CardContent>
           <div className="text-sm text-gray-600">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
               <Calendar className="w-4 h-4" />
               Period: {new Date(dateRange.from).toLocaleDateString()} - {new Date(dateRange.to).toLocaleDateString()}
             </div>

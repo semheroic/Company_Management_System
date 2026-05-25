@@ -138,6 +138,30 @@ class CompanyCapitalService {
     }));
   }
 
+  static async getCapitalContributionsFromApi(companyId?: string): Promise<CapitalContribution[]> {
+    const targetCompanyId = companyId || this.getCurrentCompanyId();
+    if (!targetCompanyId) return [];
+
+    const response = await axios.get(`${API_URL}/company/${targetCompanyId}/capital-entries`, {
+      headers: { 'x-company-id': targetCompanyId }
+    });
+
+    return (response.data || []).map((contribution: any) => ({
+      id: String(contribution.id),
+      company_id: String(targetCompanyId),
+      shareholder_id: String(contribution.shareholder_id || ""),
+      shareholder_name: contribution.shareholder_name || "",
+      amount: Number(contribution.amount || 0),
+      shares_allocated: Number(contribution.shares_allocated || 0),
+      contribution_type: contribution.method || "cash",
+      contribution_date: contribution.date_contributed || "",
+      description: contribution.description || "",
+      document_url: contribution.file_url || undefined,
+      status: contribution.status || "pending",
+      created_at: contribution.created_at || "",
+    }));
+  }
+
   static addCapitalContribution(data: Omit<CapitalContribution, 'id' | 'created_at' | 'company_id'> & { company_id?: string }): CapitalContribution {
     const companyId = data.company_id || this.getCurrentCompanyId();
     

@@ -1,12 +1,22 @@
 
-import { useState } from "react";
-import { Download, FileText, DollarSign, Users, AlertTriangle, Eye, TrendingUp } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Download, FileText, DollarSign, Users, AlertTriangle, Eye, TrendingUp, type LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import ReportService from "@/services/reportService";
+import ActionLoadingState from "@/components/common/ActionLoadingState";
+import ReportService, { type ReportData, type ReportGenerationOptions } from "@/services/reportService";
 
-const quickReports = [
+interface QuickReportItem {
+  id: number;
+  name: string;
+  description: string;
+  icon: LucideIcon;
+  type: string;
+  generator: (options?: ReportGenerationOptions) => Promise<ReportData>;
+}
+
+const quickReports: QuickReportItem[] = [
   { 
     id: 1, 
     name: "Monthly Financial Summary", 
@@ -59,11 +69,27 @@ const quickReports = [
 
 export default function QuickReports() {
   const { toast } = useToast();
-  const [generatingReport, setGeneratingReport] = useState<string | null>(null);
+  const [activeAction, setActiveAction] = useState<{ report: string; mode: "generate" | "export" } | null>(null);
 
-  const handleGenerateReport = async (report: typeof quickReports[0]) => {
+  const loadingCopy = useMemo(() => {
+    if (!activeAction) {
+      return null;
+    }
+
+    return activeAction.mode === "export"
+      ? {
+          title: `Exporting ${activeAction.report}`,
+          description: "Building the PDF from live backend report data.",
+        }
+      : {
+          title: `Generating ${activeAction.report}`,
+          description: "Collecting the latest report data before preview and export.",
+        };
+  }, [activeAction]);
+
+  const handleGenerateReport = async (report: QuickReportItem) => {
     try {
-      setGeneratingReport(report.name);
+      setActiveAction({ report: report.name, mode: "generate" });
       
       toast({
         title: "Generating Report",
@@ -87,12 +113,13 @@ export default function QuickReports() {
         variant: "destructive"
       });
     } finally {
-      setGeneratingReport(null);
+      setActiveAction(null);
     }
   };
 
-  const handleExportReport = async (report: typeof quickReports[0]) => {
+  const handleExportReport = async (report: QuickReportItem) => {
     try {
+      setActiveAction({ report: report.name, mode: "export" });
       toast({
         title: "Preparing Download",
         description: `Generating PDF for ${report.name}...`,
@@ -113,6 +140,8 @@ export default function QuickReports() {
         description: `Failed to export ${report.name} as PDF.`,
         variant: "destructive"
       });
+    } finally {
+      setActiveAction(null);
     }
   };
 
@@ -125,7 +154,11 @@ export default function QuickReports() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {loadingCopy ? (
+          <ActionLoadingState title={loadingCopy.title} description={loadingCopy.description} className="mb-4" />
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {quickReports.map((report) => (
             <div key={report.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
               <div className="flex items-start justify-between mb-3">
@@ -137,21 +170,22 @@ export default function QuickReports() {
                   </div>
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button 
                   size="sm" 
                   variant="outline" 
                   onClick={() => handleGenerateReport(report)}
-                  disabled={generatingReport === report.name}
+                  disabled={activeAction?.report === report.name}
                   className="flex-1"
                 >
-                  {generatingReport === report.name ? "Generating..." : "Generate"}
+                  {activeAction?.report === report.name && activeAction.mode === "generate" ? "Generating..." : "Generate"}
                 </Button>
                 <Button 
                   size="sm" 
                   variant="ghost"
                   onClick={() => handleExportReport(report)}
-                  disabled={generatingReport === report.name}
+                  disabled={activeAction?.report === report.name}
+                  className="sm:w-auto"
                 >
                   <Download className="w-4 h-4" />
                 </Button>

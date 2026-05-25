@@ -2,13 +2,13 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Download } from 'lucide-react';
+import { Download, type LucideIcon } from 'lucide-react';
 
 interface ReportCardProps {
   id: string;
   title: string;
   description: string;
-  icon: any;
+  icon: LucideIcon;
   category: 'financial' | 'tax' | 'compliance' | 'operational';
   isGenerating: boolean;
   onGenerate: () => void;

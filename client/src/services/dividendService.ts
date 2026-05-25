@@ -1,5 +1,7 @@
+import axios from "axios";
 import UniversalTransactionService from './universalTransactionService';
 import DataIntegrationService from './dataIntegrationService';
+import { COMPANY_BASE_URL, requestWithCompanyFallback } from "./companyApi";
 
 export interface DividendDeclaration {
   id: string;
@@ -24,6 +26,29 @@ export interface DividendDistribution {
   is_paid: boolean;
   payment_proof_url?: string;
   paid_on?: string;
+}
+
+export interface ApiDividendDeclaration {
+  id: number;
+  company_id: string;
+  profit_amount: number;
+  dividend_percentage: number;
+  dividend_pool: number;
+  approved_by: string;
+  declaration_date: string;
+  status: 'draft' | 'approved' | 'paid' | 'cancelled';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiDividendDistribution {
+  id: number;
+  declaration_id: number;
+  shareholder_name: string;
+  shares_held_at_declaration: number;
+  amount_allocated: number;
+  paid_at?: string | null;
+  created_at: string;
 }
 
 class DividendService {
@@ -187,6 +212,52 @@ class DividendService {
 
   static getDividendDistributions(declarationId: string): DividendDistribution[] {
     return this.getDistributionsByDeclaration(declarationId);
+  }
+
+  static async getAllDeclarationsFromApi(companyId?: string): Promise<ApiDividendDeclaration[]> {
+    return requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.get(`${COMPANY_BASE_URL}/${targetId}/dividends`, {
+        headers: { "x-company-id": targetId },
+      });
+
+      return (response.data || []).map((declaration: any) => ({
+        id: Number(declaration.id),
+        company_id: String(declaration.company_id || targetId),
+        profit_amount: Number(declaration.profit_amount || 0),
+        dividend_percentage: Number(declaration.dividend_percentage || 0),
+        dividend_pool:
+          Number(declaration.profit_amount || 0) * (Number(declaration.dividend_percentage || 0) / 100),
+        approved_by: declaration.approved_by || "",
+        declaration_date: declaration.declaration_date || "",
+        status: declaration.status || "draft",
+        created_at: declaration.created_at || "",
+        updated_at: declaration.updated_at || "",
+      }));
+    });
+  }
+
+  static async getDistributionsByDeclarationFromApi(
+    declarationId: number | string,
+    companyId?: string,
+  ): Promise<ApiDividendDistribution[]> {
+    return requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.get(
+        `${COMPANY_BASE_URL}/${targetId}/dividends/${declarationId}/distributions`,
+        {
+          headers: { "x-company-id": targetId },
+        },
+      );
+
+      return (response.data || []).map((distribution: any) => ({
+        id: Number(distribution.id),
+        declaration_id: Number(distribution.declaration_id),
+        shareholder_name: distribution.shareholder_name || "",
+        shares_held_at_declaration: Number(distribution.shares_held_at_declaration || 0),
+        amount_allocated: Number(distribution.amount_allocated || 0),
+        paid_at: distribution.paid_at || null,
+        created_at: distribution.created_at || "",
+      }));
+    });
   }
 
   static getDividendSummary() {

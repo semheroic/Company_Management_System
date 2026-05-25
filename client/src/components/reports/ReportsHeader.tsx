@@ -18,8 +18,8 @@ export default function ReportsHeader({
   setSelectedRole 
 }: ReportsHeaderProps) {
   return (
-    <div className="flex items-center justify-between mb-6">
-      <div className="flex items-center gap-4">
+    <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Link to="/">
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-2" />
@@ -28,9 +28,9 @@ export default function ReportsHeader({
         </Link>
         <h1 className="text-2xl font-semibold">Reports & Audit</h1>
       </div>
-      <div className="flex gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Select period" />
           </SelectTrigger>
           <SelectContent>
@@ -41,7 +41,7 @@ export default function ReportsHeader({
           </SelectContent>
         </Select>
         <Select value={selectedRole} onValueChange={setSelectedRole}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-full sm:w-40">
             <SelectValue placeholder="View as" />
           </SelectTrigger>
           <SelectContent>

@@ -91,7 +91,7 @@ class UniversalTransactionHandler {
         success: false,
         transaction_id,
         accounting_entries: [],
-        errors: [`Failed to process transaction: ${error.message}`]
+        errors: [`Failed to process transaction: ${error instanceof Error ? error.message : 'Unknown error'}`]
       };
     }
   }
@@ -194,6 +194,10 @@ class UniversalTransactionHandler {
         case 'equity_adjustment':
           // Handle equity adjustments
           await this.handleEquityAdjustment(request, entries);
+          break;
+
+        case 'transfer':
+          await this.handleTransfer(request, entries);
           break;
 
         case 'sale':

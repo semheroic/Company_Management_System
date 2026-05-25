@@ -76,6 +76,8 @@ export default function InvoicesReceipts() {
         return "bg-red-100 text-red-700";
       case "partially_paid":
         return "bg-orange-100 text-orange-700";
+      case "cancelled":
+        return "bg-slate-200 text-slate-700";
       default:
         return "bg-yellow-100 text-yellow-700";
     }

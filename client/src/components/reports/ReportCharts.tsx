@@ -88,7 +88,7 @@ export default function ReportCharts({ revenueData, expenseCategories }: ReportC
                 outerRadius={80}
                 fill="#8884d8"
                 dataKey="value"
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                label={false}
               >
                 {expenseCategories.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} />
@@ -97,6 +97,14 @@ export default function ReportCharts({ revenueData, expenseCategories }: ReportC
               <ChartTooltip content={<ChartTooltipContent />} />
             </PieChart>
           </ChartContainer>
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {expenseCategories.map((entry) => (
+              <div key={entry.name} className="flex items-center gap-2 text-sm text-gray-600">
+                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: entry.color }} />
+                <span>{entry.name}</span>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
     </div>

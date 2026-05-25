@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Calendar, CheckCircle, Download, FileText, Loader2, Search } from "lucide-react";
+import { AlertCircle, Calendar, CheckCircle, Download, FileText, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import AccountingBooksService, { TrialBalanceEntry } from "@/services/accountingBooksService";
+import ActionLoadingState from "@/components/common/ActionLoadingState";
 
 export default function TrialBalance() {
   const [trialBalance, setTrialBalance] = useState<TrialBalanceEntry[]>([]);
@@ -107,12 +108,12 @@ export default function TrialBalance() {
   return (
     <Card className="w-full">
       <CardHeader className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <CardTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
             Trial Balance
           </CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             {isBalanced ? (
               <Badge variant="default" className="flex items-center gap-1">
                 <CheckCircle className="h-3 w-3" />
@@ -131,29 +132,29 @@ export default function TrialBalance() {
           </div>
         </div>
 
-        <div className="flex flex-col items-start gap-4 lg:flex-row lg:items-center">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col items-stretch gap-4 lg:flex-row lg:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Calendar className="h-4 w-4" />
             <Input
               type="date"
               value={asOfDate}
               onChange={(e) => setAsOfDate(e.target.value)}
-              className="w-40"
+              className="w-full sm:w-40"
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Search className="h-4 w-4" />
             <Input
               placeholder="Search accounts..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-60"
+              className="w-full sm:w-60"
             />
           </div>
 
           <Select value={accountTypeFilter} onValueChange={setAccountTypeFilter}>
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-full sm:w-48">
               <SelectValue placeholder="Filter by type" />
             </SelectTrigger>
             <SelectContent>
@@ -170,10 +171,10 @@ export default function TrialBalance() {
 
       <CardContent>
         {isLoading ? (
-          <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Loading trial balance...
-          </div>
+          <ActionLoadingState
+            title="Loading trial balance"
+            description="Checking each ledger account and balancing the latest journal totals."
+          />
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

@@ -17,7 +17,7 @@ export interface InvoiceReceiptRecord {
   attachment_url?: string;
   date: string;
   due_date?: string;
-  status: "draft" | "sent" | "paid" | "overdue" | "unpaid" | "partially_paid";
+  status: "draft" | "sent" | "paid" | "overdue" | "unpaid" | "partially_paid" | "cancelled";
   created_at: string;
   payment_method?: string;
   phone_number?: string;

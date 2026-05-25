@@ -1,6 +1,6 @@
 ﻿// ── TOP OF FILE ── replace the entire chained require block with this:
 
- if (process.env.NODE_ENV !== "production") {
+if (process.env.NODE_ENV !== "production") {
   require("dotenv").config();
 }
 const express = require('express'),
@@ -17,22 +17,47 @@ const express = require('express'),
     { runMigrations } = require('./lib/runMigrations'),
     { signJwt, verifyJwt } = require('./lib/jwt');
 const MySQLStore = require('express-mysql-session')(session);
-const app = express(), PORT = process.env.PORT || 5000;
-app.set('trust proxy', 1); 
+const parseBoolean = (value, fallback = false) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+};
+const resolveEnvValue = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+const nodeEnv = String(process.env.NODE_ENV || 'development').trim().toLowerCase();
+const isProduction = parseBoolean(process.env.IS_PRODUCTION, nodeEnv === 'production');
+const HOST = resolveEnvValue(process.env.HOST, isProduction ? '0.0.0.0' : '127.0.0.1');
+const PORT = Number(process.env.PORT || 5000);
+const defaultClientOrigins = ['http://localhost:8081', 'http://127.0.0.1:8081'];
+const allowedOrigins = String(
+    resolveEnvValue(
+        process.env.CLIENT_ORIGIN,
+        process.env.CLIENT_ORIGINS,
+        process.env.FRONTEND_URL,
+        isProduction ? '' : defaultClientOrigins.join(',')
+    ) || ''
+)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const normalizeDbHost = (host) => {
+    const normalized = String(host || '').trim();
+    if (!normalized) return '127.0.0.1';
+    if (!isProduction && normalized.toLowerCase() === 'localhost') {
+        return '127.0.0.1';
+    }
+    return normalized;
+};
+const app = express();
+app.set('trust proxy', isProduction ? 1 : false);
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'office_manager.sid';
 const SESSION_SECRET = process.env.SESSION_SECRET || JWT_SECRET;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_OPERATION_TIMEOUT_MS = 5000;
-const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:8081')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
 
 app.use(cors({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
             callback(null, origin || allowedOrigins[0]);
             return;
         }
@@ -63,32 +88,32 @@ const asyncHandler = fn => (req, res, next) => {
 
 // --- 2. DATABASE CONNECTION ---
 
-
-const isProduction = process.env.NODE_ENV === 'production';
-console.log("ENV:", process.env.NODE_ENV);
+console.log("ENV:", process.env.NODE_ENV || 'development');
 console.log("DB MODE:", isProduction ? "Production" : "Local");
 
 // ================= DATABASE =================
 
 const dbConfig = {
-    host: isProduction
-        ? process.env.MYSQLHOST || process.env.DB_HOST
-        : process.env.DB_HOST || "localhost",
+    host: normalizeDbHost(
+        isProduction
+            ? resolveEnvValue(process.env.MYSQLHOST, process.env.DB_HOST, '127.0.0.1')
+            : resolveEnvValue(process.env.DB_HOST, process.env.MYSQLHOST, '127.0.0.1')
+    ),
 
     port: isProduction
-        ? Number(process.env.MYSQLPORT || process.env.DB_PORT)
+        ? Number(resolveEnvValue(process.env.MYSQLPORT, process.env.DB_PORT, 3306))
         : Number(process.env.DB_PORT) || 3306,
 
     user: isProduction
-        ? process.env.MYSQLUSER || process.env.DB_USER
+        ? resolveEnvValue(process.env.MYSQLUSER, process.env.DB_USER)
         : process.env.DB_USER || "root",
 
     password: isProduction
-        ? process.env.MYSQLPASSWORD || process.env.DB_PASSWORD
+        ? resolveEnvValue(process.env.MYSQLPASSWORD, process.env.DB_PASSWORD)
         : process.env.DB_PASSWORD || "",
 
     database: isProduction
-        ? process.env.MYSQLDATABASE || process.env.DB_NAME
+        ? resolveEnvValue(process.env.MYSQLDATABASE, process.env.DB_NAME)
         : process.env.DB_NAME || "office_manager_db",
 
     waitForConnections: true,
@@ -255,6 +280,7 @@ const inferAccountCategory = (code = '') => {
 };
 
 const buildJournalReference = (journalId, referenceNo) => referenceNo || `JE-${String(journalId).padStart(6, '0')}`;
+const buildReversalReference = (journalId) => `REV-${String(journalId).padStart(6, '0')}`;
 
 const ensureDefaultAccounts = async (companyId, conn = db) => {
     for (const account of DEFAULT_ACCOUNTS) {
@@ -1922,15 +1948,22 @@ app.get('/api/company/:companyId/accounting-books', validateCompany, asyncHandle
             a.name AS account_name,
             je.description,
             COALESCE(je.entry_type, 'manual') AS source_type,
+            COALESCE(je.status, 'posted') AS status,
+            je.source_id,
+            je.cancelled_at,
+            je.cancelled_reason,
+            je.reversal_journal_entry_id,
             gl.debit,
             gl.credit,
             sd.file_name AS document_file_name,
             sd.file_path AS document_file_path,
+            COALESCE(reversal.reference_no, CONCAT('JE-', LPAD(reversal.id, 6, '0'))) AS reversal_reference,
             je.created_at
         FROM journal_entries je
         INNER JOIN general_ledger gl ON gl.journal_entry_id = je.id
         INNER JOIN accounts a ON a.id = gl.account_id
         LEFT JOIN supporting_documents sd ON sd.journal_entry_id = je.id AND sd.company_id = je.company_id
+        LEFT JOIN journal_entries reversal ON reversal.id = je.reversal_journal_entry_id
         WHERE je.company_id = ?
         ORDER BY je.entry_date DESC, je.created_at DESC, gl.id DESC
     `, [req.companyId]);
@@ -2040,7 +2073,8 @@ app.post('/api/company/:companyId/accounting-books/manual-entry', upload.single(
             entry_date: date,
             description,
             entry_type: entryType || 'manual',
-            reference_no: reference_no || null
+            reference_no: reference_no || null,
+            status: 'posted'
         });
 
         const journalId = jeResult.insertId;
@@ -2091,7 +2125,7 @@ app.post('/api/company/:companyId/accounting-books/transactions', validateCompan
         await conn.beginTransaction();
         await ensureDefaultAccounts(req.companyId, conn);
 
-        const { date, description, reference, source_type, entries } = req.body;
+        const { date, description, reference, source_type, source_id, entries } = req.body;
         if (!date || !description || !Array.isArray(entries) || entries.length < 2) {
             throw new AppError('Date, description, and at least two accounting entries are required', 400);
         }
@@ -2108,7 +2142,9 @@ app.post('/api/company/:companyId/accounting-books/transactions', validateCompan
             entry_date: date,
             description,
             entry_type: source_type || 'manual',
-            reference_no: reference || null
+            reference_no: reference || null,
+            source_id: source_id || null,
+            status: 'posted'
         });
         const journalId = jeResult.insertId;
 
@@ -2132,6 +2168,129 @@ app.post('/api/company/:companyId/accounting-books/transactions', validateCompan
     } catch (err) {
         await conn.rollback();
         throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+app.post('/api/company/:companyId/accounting-books/journal/:journalId/cancel', validateCompany, asyncHandler(async (req, res) => {
+    const journalId = Number(req.params.journalId);
+    const reason = String(req.body?.reason || '').trim();
+
+    if (!journalId) {
+        throw new AppError('A valid journal entry is required', 400);
+    }
+
+    if (!reason) {
+        throw new AppError('A cancellation reason is required', 400);
+    }
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const [[journal]] = await conn.query(`
+            SELECT
+                id,
+                company_id,
+                entry_date,
+                description,
+                entry_type,
+                reference_no,
+                source_id,
+                COALESCE(status, 'posted') AS status,
+                reversal_journal_entry_id
+            FROM journal_entries
+            WHERE company_id = ? AND id = ?
+            LIMIT 1
+        `, [req.companyId, journalId]);
+
+        if (!journal) {
+            throw new AppError('Journal entry not found', 404);
+        }
+
+        if (journal.status === 'cancelled') {
+            throw new AppError('This journal entry has already been cancelled', 409);
+        }
+
+        if (journal.entry_type === 'reversal') {
+            throw new AppError('Reversal journal entries cannot be cancelled again', 409);
+        }
+
+        const [[linkedPayroll]] = await conn.query(
+            'SELECT id FROM payroll_records WHERE company_id = ? AND accounting_journal_id = ? LIMIT 1',
+            [req.companyId, journalId]
+        );
+
+        if (linkedPayroll || /^PAYROLL-/.test(String(journal.reference_no || ''))) {
+            throw new AppError('Payroll journals cannot be cancelled from Accounting Books. Use Payroll HR.', 409);
+        }
+
+        const [ledgerLines] = await conn.query(`
+            SELECT account_id, debit, credit
+            FROM general_ledger
+            WHERE company_id = ? AND journal_entry_id = ?
+            ORDER BY id ASC
+        `, [req.companyId, journalId]);
+
+        if (!ledgerLines.length) {
+            throw new AppError('This journal entry has no ledger lines to reverse', 409);
+        }
+
+        const reversalReference = buildReversalReference(journal.id);
+        const [reversalResult] = await conn.query('INSERT INTO journal_entries SET ?', {
+            company_id: req.companyId,
+            entry_date: getTodayDate(),
+            description: `Reversal of ${buildJournalReference(journal.id, journal.reference_no)}: ${journal.description}`,
+            entry_type: 'reversal',
+            reference_no: reversalReference,
+            source_id: journal.source_id || null,
+            status: 'posted'
+        });
+
+        const reversalJournalId = reversalResult.insertId;
+
+        for (const line of ledgerLines) {
+            await conn.query('INSERT INTO general_ledger SET ?', {
+                company_id: req.companyId,
+                journal_entry_id: reversalJournalId,
+                account_id: Number(line.account_id),
+                debit: Number(line.credit || 0),
+                credit: Number(line.debit || 0)
+            });
+        }
+
+        await conn.query(`
+            UPDATE journal_entries
+            SET status = 'cancelled',
+                cancelled_at = NOW(),
+                cancelled_reason = ?,
+                reversal_journal_entry_id = ?,
+                updated_at = NOW()
+            WHERE company_id = ? AND id = ?
+        `, [reason, reversalJournalId, req.companyId, journalId]);
+
+        if (journal.source_id) {
+            await conn.query(`
+                UPDATE invoice
+                SET status = 'cancelled',
+                    updated_at = NOW()
+                WHERE company_id = ? AND transaction_id = ?
+            `, [req.companyId, journal.source_id]);
+        }
+
+        await conn.commit();
+        res.json({
+            success: true,
+            journalId,
+            reversalJournalId,
+            sourceId: journal.source_id || null,
+            reference: buildJournalReference(journal.id, journal.reference_no),
+            reversalReference
+        });
+    } catch (error) {
+        await conn.rollback();
+        throw error;
     } finally {
         conn.release();
     }
@@ -3988,7 +4147,10 @@ const startServer = async () => {
     try {
         await verifyDatabaseConnection();
         await runMigrations(db);
-        app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+        app.listen(PORT, HOST, () => {
+            const displayHost = HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST;
+            console.log(`Server running on http://${displayHost}:${PORT}`);
+        });
     } catch (error) {
         console.error('Failed to start server:', error.message);
         process.exit(1);

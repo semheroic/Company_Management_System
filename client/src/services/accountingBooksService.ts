@@ -13,6 +13,12 @@ export interface AccountingBookEntry {
   account_name: string;
   description: string;
   source_type: string;
+  status: "posted" | "cancelled" | "reversal" | string;
+  source_id?: string | null;
+  cancelled_at?: string | null;
+  cancelled_reason?: string | null;
+  reversal_journal_entry_id?: number | null;
+  reversal_reference?: string | null;
   debit: number;
   credit: number;
   document_file_name?: string | null;
@@ -236,6 +242,22 @@ class AccountingBooksService {
       const response = await axios.post(
         `${BASE_URL}/${targetId}/accounting-books/transactions`,
         input,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-company-id": targetId,
+          },
+        },
+      );
+      return response.data;
+    });
+  }
+
+  static async cancelJournalEntry(journalId: number, reason: string, companyId?: string) {
+    return this.requestWithCompanyFallback(companyId, async (targetId) => {
+      const response = await axios.post(
+        `${BASE_URL}/${targetId}/accounting-books/journal/${journalId}/cancel`,
+        { reason },
         {
           headers: {
             "Content-Type": "application/json",

@@ -4,7 +4,21 @@ import DataIntegrationService from './dataIntegrationService';
 export interface UniversalTransaction {
   id: string;
   company_id: string;
-  type: 'sale' | 'purchase' | 'expense' | 'income' | 'salary' | 'asset_acquisition' | 'payment';
+  type:
+    | 'sale'
+    | 'purchase'
+    | 'expense'
+    | 'income'
+    | 'salary'
+    | 'asset_acquisition'
+    | 'payment'
+    | 'capital_contribution'
+    | 'capital_withdrawal'
+    | 'share_issuance'
+    | 'dividend_declaration'
+    | 'dividend_payment'
+    | 'equity_adjustment'
+    | 'transfer';
   amount: number;
   vat?: number;
   description: string;
@@ -88,6 +102,7 @@ class UniversalTransactionService {
   }
 
   static postTransaction(transaction: UniversalTransaction): void {
+    this.loadTransactions();
     this.transactions.push(transaction);
     this.postToAccounting(transaction);
     localStorage.setItem('universal-transactions', JSON.stringify(this.transactions));
@@ -253,6 +268,7 @@ class UniversalTransactionService {
   }
 
   static updateTransactionStatus(id: string, status: UniversalTransaction['status']): void {
+    this.loadTransactions();
     const transaction = this.transactions.find(t => t.id === id);
     if (transaction) {
       transaction.status = status;
@@ -262,6 +278,7 @@ class UniversalTransactionService {
   }
 
   static deleteTransaction(id: string): void {
+    this.loadTransactions();
     this.transactions = this.transactions.filter(t => t.id !== id);
     localStorage.setItem('universal-transactions', JSON.stringify(this.transactions));
     DataIntegrationService.notify('transactions', this.transactions);

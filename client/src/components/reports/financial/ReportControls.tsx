@@ -51,7 +51,7 @@ export default function ReportControls({
           <Button 
             onClick={onGenerateAll}
             disabled={isGenerating}
-            className="whitespace-nowrap"
+            className="w-full whitespace-nowrap sm:w-auto"
           >
             <Download className="w-4 h-4 mr-2" />
             {isGenerating ? 'Generating...' : 'Generate All Reports'}
