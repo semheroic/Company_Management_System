@@ -55,13 +55,13 @@ const Index = () => {
         
         <main className="flex-1 flex flex-col">
           {/* Top Navigation Bar */}
-          <header className="flex items-center justify-between gap-4 p-4 lg:p-6 bg-white border-b border-gray-100 shadow-sm sticky top-0 z-10">
-            <div className="flex items-center gap-4">
+          <header className="sticky top-0 z-10 flex flex-col gap-4 border-b border-gray-100 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:p-6">
+            <div className="flex min-w-0 items-start gap-4 sm:items-center">
               <SidebarTrigger className="hover:bg-gray-100 p-2 rounded-lg transition-all active:scale-95" />
-              <div className="h-6 w-[1px] bg-gray-200 hidden md:block mx-2" />
+              <div className="mx-2 hidden h-6 w-[1px] bg-gray-200 md:block" />
               <DashboardHeader />
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex w-full flex-wrap items-center justify-end gap-3 lg:w-auto">
               <NotificationCenter />
               <CompanySelector />
               <DashboardUserMenu />
@@ -70,8 +70,9 @@ const Index = () => {
           
           <div className="flex-1 p-4 lg:p-8 overflow-y-auto">
             <Tabs defaultValue="overview" className="space-y-8">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <TabsList className="bg-white border border-gray-200 p-1 h-12 shadow-sm">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="overflow-x-auto">
+                <TabsList className="h-12 min-w-max bg-white border border-gray-200 p-1 shadow-sm">
                   <TabsTrigger 
                     value="overview" 
                     className="px-6 data-[state=active]:bg-indigo-600 data-[state=active]:text-white transition-all"
@@ -85,6 +86,7 @@ const Index = () => {
                     System Health
                   </TabsTrigger>
                 </TabsList>
+                </div>
 
                 <div className="text-xs text-muted-foreground bg-gray-100 px-3 py-1 rounded-full font-medium">
                   Last Sync: {new Date().toLocaleTimeString()}

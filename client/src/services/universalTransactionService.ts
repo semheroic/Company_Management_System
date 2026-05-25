@@ -115,7 +115,7 @@ class UniversalTransactionService {
     
     try {
       switch (transaction.type) {
-        case 'sale':
+        case 'sale': {
           const saleVat = transaction.vat || (transaction.amount * vatRate / (1 + vatRate));
           const saleNet = transaction.amount - saleVat;
           
@@ -132,8 +132,9 @@ class UniversalTransactionService {
             ]
           });
           break;
+        }
 
-        case 'purchase':
+        case 'purchase': {
           const purchaseVat = transaction.vat || (transaction.amount * vatRate / (1 + vatRate));
           const purchaseNet = transaction.amount - purchaseVat;
           
@@ -150,8 +151,9 @@ class UniversalTransactionService {
             ]
           });
           break;
+        }
 
-        case 'expense':
+        case 'expense': {
           const paymentAccount = this.getPaymentAccount(transaction.payment_method);
           
           TransactionEngine.postTransaction({
@@ -166,8 +168,9 @@ class UniversalTransactionService {
             ]
           });
           break;
+        }
 
-        case 'income':
+        case 'income': {
           const incomePaymentAccount = this.getPaymentAccount(transaction.payment_method);
           
           TransactionEngine.postTransaction({
@@ -182,6 +185,7 @@ class UniversalTransactionService {
             ]
           });
           break;
+        }
 
         case 'salary':
           if (transaction.gross_salary && transaction.net_salary) {
@@ -200,8 +204,7 @@ class UniversalTransactionService {
             });
           }
           break;
-
-        case 'asset_acquisition':
+        case 'asset_acquisition': {
           const assetPaymentAccount = this.getPaymentAccount(transaction.payment_method);
           
           TransactionEngine.postTransaction({
@@ -216,8 +219,9 @@ class UniversalTransactionService {
             ]
           });
           break;
+        }
 
-        case 'payment':
+        case 'payment': {
           const fromAccount = this.getPaymentAccount(transaction.payment_method);
           
           TransactionEngine.postTransaction({
@@ -232,6 +236,7 @@ class UniversalTransactionService {
             ]
           });
           break;
+        }
       }
     } catch (error) {
       console.error('Error posting transaction to accounting:', error);

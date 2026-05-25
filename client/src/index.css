@@ -95,6 +95,12 @@
   body {
     @apply bg-background text-foreground font-poppins;
   }
+
+  html,
+  body,
+  #root {
+    @apply min-h-full;
+  }
 }
 
 @layer components {
@@ -154,5 +160,45 @@
   
   .analytics-chart {
     @apply bg-white border border-gray-200 rounded-lg shadow-sm;
+  }
+
+  .page-shell {
+    @apply min-h-screen bg-[radial-gradient(circle_at_top,#f8fbff_0%,#eef4ff_32%,#f8fafc_72%)] px-4 py-5 sm:px-6 lg:px-8;
+  }
+
+  .page-container {
+    @apply mx-auto w-full max-w-7xl space-y-6;
+  }
+
+  .page-header {
+    @apply flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between;
+  }
+
+  .page-header-copy {
+    @apply flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center;
+  }
+
+  .page-actions {
+    @apply flex flex-col gap-2 sm:flex-row sm:flex-wrap;
+  }
+
+  .page-metrics {
+    @apply grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4;
+  }
+
+  .page-card {
+    @apply overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm;
+  }
+
+  .page-toolbar {
+    @apply flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between;
+  }
+
+  .page-toolbar-controls {
+    @apply flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center;
+  }
+
+  .table-scroll {
+    @apply overflow-x-auto;
   }
 }

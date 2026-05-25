@@ -190,6 +190,7 @@ export default function AccountingBooks() {
     switch (sourceType) {
       case "invoice":
       case "sale":
+      case "income":
         return "bg-green-100 text-green-800";
       case "purchase":
         return "bg-blue-100 text-blue-800";
@@ -202,11 +203,27 @@ export default function AccountingBooks() {
       case "payment":
       case "expense":
         return "bg-orange-100 text-orange-800";
+      case "capital_contribution":
+      case "share_issuance":
+        return "bg-indigo-100 text-indigo-800";
+      case "capital_withdrawal":
+      case "dividend_payment":
+        return "bg-rose-100 text-rose-800";
+      case "dividend_declaration":
+      case "equity_adjustment":
+      case "transfer":
+        return "bg-sky-100 text-sky-800";
       case "manual":
       default:
         return "bg-gray-100 text-gray-800";
     }
   };
+
+  const formatSourceTypeLabel = (sourceType: string) =>
+    sourceType
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
 
   const getJournalStatusBadgeColor = (entry: AccountingBookEntry) => {
     if (entry.source_type === "reversal") {
@@ -255,19 +272,24 @@ export default function AccountingBooks() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
+    <div className="page-shell">
+      <div className="page-container">
+        <div className="page-header">
+          <div className="page-header-copy">
             <Link to="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Dashboard
               </Button>
             </Link>
-            <h1 className="text-2xl font-semibold">Accounting Books</h1>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">Accounting Books</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Post journals, review ledger activity, and monitor the backend accounting record for the active company.
+              </p>
+            </div>
           </div>
-          <div className="flex gap-2">
+          <div className="page-actions">
             <Button variant="outline" onClick={() => handleExport("csv")}>
               <Download className="w-4 h-4 mr-2" />
               Export CSV
@@ -283,19 +305,19 @@ export default function AccountingBooks() {
           </div>
         </div>
 
-        <Card className="mb-6 bg-gradient-to-r from-blue-50 to-green-50 border-blue-200">
+        <Card className="page-card border-sky-200 bg-gradient-to-r from-sky-50 via-white to-emerald-50">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex items-center gap-3">
                 <Zap className="w-6 h-6 text-green-600" />
                 <div>
-                  <h3 className="font-semibold text-gray-800">Universal Transaction System</h3>
-                  <p className="text-sm text-gray-600">
+                  <h3 className="font-semibold text-slate-900">Universal Transaction System</h3>
+                  <p className="text-sm text-slate-600">
                     Use Quick Transaction for single-entry bookkeeping. It now syncs the backend accounting books while preserving the existing local transaction workflows.
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center xl:shrink-0">
                 <Button
                   onClick={() => setShowUniversalForm(true)}
                   className="bg-green-600 hover:bg-green-700"
@@ -316,7 +338,7 @@ export default function AccountingBooks() {
           </CardContent>
         </Card>
 
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="page-metrics">
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold text-green-600">{formatCurrency(summary.totalDebits)}</div>
@@ -345,30 +367,30 @@ export default function AccountingBooks() {
           </Card>
         </div>
 
-        <Card>
+        <Card className="page-card">
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="page-toolbar">
               <CardTitle className="flex items-center gap-2">
                 <Calculator className="w-5 h-5" />
                 Accounting Entries
               </CardTitle>
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="page-toolbar-controls">
                 <Input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  className="w-40"
+                  className="w-full sm:w-40"
                   placeholder="From Date"
                 />
                 <Input
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
-                  className="w-40"
+                  className="w-full sm:w-40"
                   placeholder="To Date"
                 />
                 <Select value={filterType} onValueChange={setFilterType}>
-                  <SelectTrigger className="w-40">
+                  <SelectTrigger className="w-full sm:w-44">
                     <SelectValue placeholder="Filter type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -380,12 +402,20 @@ export default function AccountingBooks() {
                     <SelectItem value="asset">Assets</SelectItem>
                     <SelectItem value="payment">Payments</SelectItem>
                     <SelectItem value="sale">Sale</SelectItem>
+                    <SelectItem value="income">Income</SelectItem>
                     <SelectItem value="expense">Expense</SelectItem>
+                    <SelectItem value="transfer">Transfer</SelectItem>
+                    <SelectItem value="capital_contribution">Capital Contribution</SelectItem>
+                    <SelectItem value="capital_withdrawal">Capital Withdrawal</SelectItem>
+                    <SelectItem value="share_issuance">Share Issuance</SelectItem>
+                    <SelectItem value="dividend_declaration">Dividend Declaration</SelectItem>
+                    <SelectItem value="dividend_payment">Dividend Payment</SelectItem>
+                    <SelectItem value="equity_adjustment">Equity Adjustment</SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
                   placeholder="Search entries..."
-                  className="w-60"
+                  className="w-full sm:w-64"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -396,8 +426,8 @@ export default function AccountingBooks() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
+            <div className="table-scroll">
+              <Table className="min-w-[980px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
@@ -429,7 +459,7 @@ export default function AccountingBooks() {
                         </TableCell>
                         <TableCell className="max-w-xs truncate">{entry.description}</TableCell>
                         <TableCell>
-                          <Badge className={getSourceTypeBadgeColor(entry.source_type)}>{entry.source_type}</Badge>
+                          <Badge className={getSourceTypeBadgeColor(entry.source_type)}>{formatSourceTypeLabel(entry.source_type)}</Badge>
                         </TableCell>
                         <TableCell>
                           <div className="space-y-1">
@@ -489,8 +519,8 @@ export default function AccountingBooks() {
             </div>
 
             {filteredEntries.length > 0 && (
-              <div className="mt-4 pt-4 border-t bg-gray-50 rounded-lg p-4">
-                <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="grid grid-cols-1 gap-4 text-center sm:grid-cols-3">
                   <div>
                     <div className="text-lg font-semibold text-green-600">{formatCurrency(filteredDebits)}</div>
                     <div className="text-sm text-gray-600">Filtered Debits</div>

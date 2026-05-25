@@ -124,27 +124,32 @@ export default function TrialBalance() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+    <div className="page-shell">
+      <div className="page-container">
+        <div className="page-header">
+          <div className="page-header-copy">
             <Link to="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to Dashboard
               </Button>
             </Link>
-            <h1 className="text-2xl font-semibold">Trial Balance</h1>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">Trial Balance</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Validate the balance of the ledger and inspect account totals as of any reporting date.
+              </p>
+            </div>
           </div>
-          <Button variant="outline" onClick={handleExport}>
+          <Button variant="outline" onClick={handleExport} className="w-full sm:w-auto">
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
         </div>
 
-        <Card className="mb-6">
+        <Card className="page-card">
           <CardContent className="p-4">
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
               <Calendar className="h-5 w-5 text-gray-600" />
               <label htmlFor="asOfDate" className="font-medium">
                 As of Date:
@@ -154,10 +159,10 @@ export default function TrialBalance() {
                 type="date"
                 value={asOfDate}
                 onChange={(e) => setAsOfDate(e.target.value)}
-                className="w-48"
+                className="w-full sm:w-56"
               />
               <div
-                className={`ml-4 rounded-full px-3 py-1 text-sm font-medium ${
+                className={`rounded-full px-3 py-1 text-sm font-medium lg:ml-auto ${
                   isBalanced ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
                 }`}
               >
@@ -167,7 +172,7 @@ export default function TrialBalance() {
           </CardContent>
         </Card>
 
-        <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="page-metrics">
           <Card>
             <CardContent className="p-6">
               <div className="text-2xl font-bold text-blue-600">{formatCurrency(financialSummary.assets)}</div>
@@ -194,7 +199,7 @@ export default function TrialBalance() {
           </Card>
         </div>
 
-        <Card>
+        <Card className="page-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5" />
@@ -202,7 +207,8 @@ export default function TrialBalance() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
+            <div className="table-scroll">
+            <Table className="min-w-[760px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Account Code</TableHead>
@@ -250,6 +256,7 @@ export default function TrialBalance() {
                 </TableRow>
               </TableBody>
             </Table>
+            </div>
 
             {visibleRows.length === 0 && (
               <div className="py-8 text-center text-gray-500">No account balances found for the selected date.</div>

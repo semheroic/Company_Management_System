@@ -152,6 +152,7 @@ export default function GeneralLedger() {
     switch (sourceType) {
       case "invoice":
       case "sale":
+      case "income":
         return "bg-green-100 text-green-800";
       case "purchase":
         return "bg-blue-100 text-blue-800";
@@ -164,11 +165,27 @@ export default function GeneralLedger() {
       case "payment":
       case "expense":
         return "bg-orange-100 text-orange-800";
+      case "capital_contribution":
+      case "share_issuance":
+        return "bg-indigo-100 text-indigo-800";
+      case "capital_withdrawal":
+      case "dividend_payment":
+        return "bg-rose-100 text-rose-800";
+      case "dividend_declaration":
+      case "equity_adjustment":
+      case "transfer":
+        return "bg-sky-100 text-sky-800";
       case "manual":
       default:
         return "bg-gray-100 text-gray-800";
     }
   };
+
+  const formatSourceTypeLabel = (sourceType: string) =>
+    sourceType
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
 
   const handleViewDocument = (entry: AccountingBookEntry) => {
     if (!entry.document_file_path) {
@@ -194,19 +211,24 @@ export default function GeneralLedger() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
+    <div className="page-shell">
+      <div className="page-container">
+        <div className="page-header">
+          <div className="page-header-copy">
             <Link to="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Dashboard
               </Button>
             </Link>
-            <h1 className="text-2xl font-semibold">General Ledger</h1>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">General Ledger</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Review line-level ledger postings, account movement, and financial position from the synchronized backend books.
+              </p>
+            </div>
           </div>
-          <div className="flex gap-2">
+          <div className="page-actions">
             <Button variant="outline" onClick={() => handleExport("csv")}>
               <Download className="w-4 h-4 mr-2" />
               Export CSV
@@ -218,7 +240,7 @@ export default function GeneralLedger() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="page-metrics">
           <Card>
             <CardContent className="p-6">
               <div className="text-2xl font-bold text-green-600">{formatCurrency(financialSummary.revenue)}</div>
@@ -245,16 +267,16 @@ export default function GeneralLedger() {
           </Card>
         </div>
 
-        <Card>
+        <Card className="page-card">
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="page-toolbar">
               <CardTitle className="flex items-center gap-2">
                 <FileText className="w-5 h-5" />
                 General Ledger Entries
               </CardTitle>
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="page-toolbar-controls">
                 <Select value={filterAccount} onValueChange={setFilterAccount}>
-                  <SelectTrigger className="w-52">
+                  <SelectTrigger className="w-full sm:w-56">
                     <SelectValue placeholder="Filter by account" />
                   </SelectTrigger>
                   <SelectContent>
@@ -267,7 +289,7 @@ export default function GeneralLedger() {
                   </SelectContent>
                 </Select>
                 <Select value={filterSourceType} onValueChange={setFilterSourceType}>
-                  <SelectTrigger className="w-40">
+                  <SelectTrigger className="w-full sm:w-44">
                     <SelectValue placeholder="Source type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -278,12 +300,20 @@ export default function GeneralLedger() {
                     <SelectItem value="payment">Payment</SelectItem>
                     <SelectItem value="manual">Manual</SelectItem>
                     <SelectItem value="sale">Sale</SelectItem>
+                    <SelectItem value="income">Income</SelectItem>
                     <SelectItem value="expense">Expense</SelectItem>
+                    <SelectItem value="transfer">Transfer</SelectItem>
+                    <SelectItem value="capital_contribution">Capital Contribution</SelectItem>
+                    <SelectItem value="capital_withdrawal">Capital Withdrawal</SelectItem>
+                    <SelectItem value="share_issuance">Share Issuance</SelectItem>
+                    <SelectItem value="dividend_declaration">Dividend Declaration</SelectItem>
+                    <SelectItem value="dividend_payment">Dividend Payment</SelectItem>
+                    <SelectItem value="equity_adjustment">Equity Adjustment</SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
                   placeholder="Search entries..."
-                  className="max-w-xs"
+                  className="w-full sm:w-72"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -294,7 +324,8 @@ export default function GeneralLedger() {
             </div>
           </CardHeader>
           <CardContent>
-            <Table>
+            <div className="table-scroll">
+            <Table className="min-w-[900px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
@@ -326,7 +357,7 @@ export default function GeneralLedger() {
                       {entry.credit > 0 ? formatCurrency(entry.credit) : "-"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={getSourceTypeBadgeColor(entry.source_type)}>{entry.source_type}</Badge>
+                      <Badge className={getSourceTypeBadgeColor(entry.source_type)}>{formatSourceTypeLabel(entry.source_type)}</Badge>
                     </TableCell>
                     <TableCell>
                       <Button variant="ghost" size="sm" onClick={() => handleViewDocument(entry)}>
@@ -337,6 +368,7 @@ export default function GeneralLedger() {
                 ))}
               </TableBody>
             </Table>
+            </div>
 
             {filteredEntries.length === 0 && (
               <div className="text-center py-8 text-gray-500">No entries found matching your criteria</div>

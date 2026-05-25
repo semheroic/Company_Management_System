@@ -225,7 +225,7 @@ export default function CompanySelector() {
         <DropdownMenuTrigger asChild disabled={isSwitching || deletingId !== null}>
           <Button
             variant="outline"
-            className={`w-72 justify-between overflow-hidden border-gray-200 bg-white/80 shadow-sm backdrop-blur-sm transition-all duration-300 ${
+            className={`min-w-0 w-full max-w-[18rem] justify-between overflow-hidden border-gray-200 bg-white/80 shadow-sm backdrop-blur-sm transition-all duration-300 sm:w-72 ${
               isSwitching ? "border-blue-400 ring-2 ring-blue-50" : ""
             }`}
           >
@@ -260,7 +260,7 @@ export default function CompanySelector() {
           </Button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent className="w-80 p-2">
+        <DropdownMenuContent className="w-[min(20rem,calc(100vw-2rem))] p-2 sm:w-80">
           <DropdownMenuLabel className="px-2 py-1 text-[10px] uppercase text-gray-400">
             Quick Switch
           </DropdownMenuLabel>

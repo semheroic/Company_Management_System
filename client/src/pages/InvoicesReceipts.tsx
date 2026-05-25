@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { UniversalTransactionForm } from "@/components/forms/UniversalTransactionForm";
 import InvoiceRegisterService, {
@@ -159,19 +160,24 @@ export default function InvoicesReceipts() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
+    <div className="page-shell">
+      <div className="page-container">
+        <div className="page-header">
+          <div className="page-header-copy">
             <Link to="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Dashboard
               </Button>
             </Link>
-            <h1 className="text-2xl font-semibold">Invoices & Receipts Register</h1>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">Invoices & Receipts Register</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Review the synchronized sales and purchase register created from posted transaction flows.
+              </p>
+            </div>
           </div>
-          <div className="flex gap-2">
+          <div className="page-actions">
             <Button variant="outline" onClick={handleExportCSV}>
               <Download className="w-4 h-4 mr-2" />
               Export CSV
@@ -183,7 +189,7 @@ export default function InvoicesReceipts() {
           </div>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="page-metrics">
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold text-green-600">{formatCurrency(summary.totalSales)}</div>
@@ -210,9 +216,9 @@ export default function InvoicesReceipts() {
           </Card>
         </div>
 
-        <Card>
+        <Card className="page-card">
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="page-toolbar">
               <CardTitle className="flex items-center gap-2">
                 <FileText className="w-5 h-5" />
                 Invoice & Receipt Register
@@ -220,19 +226,20 @@ export default function InvoicesReceipts() {
                   Linked to Universal Transaction System
                 </Badge>
               </CardTitle>
-              <div className="flex items-center gap-2">
-                <select
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value)}
-                  className="border rounded px-3 py-1 text-sm"
-                >
-                  <option value="all">All Types</option>
-                  <option value="invoice">Invoices (Sales)</option>
-                  <option value="receipt">Receipts (Purchases)</option>
-                </select>
+              <div className="page-toolbar-controls">
+                <Select value={filterType} onValueChange={setFilterType}>
+                  <SelectTrigger className="w-full sm:w-52">
+                    <SelectValue placeholder="Filter type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="invoice">Invoices (Sales)</SelectItem>
+                    <SelectItem value="receipt">Receipts (Purchases)</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Input
                   placeholder="Search..."
-                  className="max-w-xs"
+                  className="w-full sm:w-72"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -243,7 +250,8 @@ export default function InvoicesReceipts() {
             </div>
           </CardHeader>
           <CardContent>
-            <Table>
+            <div className="table-scroll">
+            <Table className="min-w-[1040px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Number</TableHead>
@@ -298,11 +306,12 @@ export default function InvoicesReceipts() {
                 )}
               </TableBody>
             </Table>
+            </div>
           </CardContent>
         </Card>
 
         <Dialog open={!!selectedRecord} onOpenChange={(open) => !open && setSelectedRecord(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {selectedRecord?.type === "invoice" ? "Invoice Details" : "Receipt Details"}
@@ -310,7 +319,7 @@ export default function InvoicesReceipts() {
             </DialogHeader>
             {selectedRecord && (
               <div className="space-y-4 text-sm">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <div className="text-gray-500">Document Number</div>
                     <div className="font-mono font-medium">{selectedRecord.number}</div>
@@ -370,7 +379,7 @@ export default function InvoicesReceipts() {
                     {selectedRecord.description || "-"}
                   </div>
                 </div>
-                <div className="flex justify-end gap-2 pt-2">
+                <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:justify-end">
                   <Button variant="outline" onClick={() => handleDownloadPDF(selectedRecord)}>
                     <Download className="w-4 h-4 mr-2" />
                     Download PDF
